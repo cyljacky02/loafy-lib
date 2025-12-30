@@ -1,0 +1,174 @@
+package me.cyljacky02.loafylib.config
+
+import org.bukkit.plugin.Plugin
+import org.spongepowered.configurate.CommentedConfigurationNode
+import org.spongepowered.configurate.ConfigurateException
+import org.spongepowered.configurate.ConfigurationNode
+import org.spongepowered.configurate.ConfigurationOptions
+import org.spongepowered.configurate.kotlin.extensions.get
+import org.spongepowered.configurate.yaml.NodeStyle
+import org.spongepowered.configurate.yaml.YamlConfigurationLoader
+import java.nio.file.Files
+import java.nio.file.Path
+
+/**
+ * Utility functions for working with Sponge Configurate YAML configuration.
+ *
+ * Provides standardized configuration loading with:
+ * - BLOCK node style for readable YAML output
+ * - shouldCopyDefaults(true) for automatic default population
+ * - Extension functions for common operations
+ *
+ * ## Usage Example
+ * ```kotlin
+ * // Create a loader for a config file
+ * val loader = ConfigurateUtils.createYamlLoader(
+ *     path = plugin.ensureDataFolder().resolve("config.yml"),
+ *     header = "My Plugin Configuration"
+ * )
+ *
+ * // Load configuration
+ * val node = loader.load()
+ * val config = node.get<MyConfig>() ?: MyConfig()
+ *
+ * // Save with defaults populated
+ * node.set(config)
+ * loader.save(node)
+ * ```
+ */
+object ConfigurateUtils {
+
+    /**
+     * Creates a YamlConfigurationLoader with standard settings for Loafy plugins.
+     *
+     * The loader is configured with:
+     * - BLOCK node style for human-readable YAML
+     * - shouldCopyDefaults(true) to populate missing values from defaults
+     * - Optional header comment at the top of the file
+     *
+     * @param path Path to the YAML configuration file
+     * @param header Optional header comment to include at the top of the file
+     * @return Configured YamlConfigurationLoader
+     */
+    fun createYamlLoader(path: Path, header: String? = null): YamlConfigurationLoader {
+        return YamlConfigurationLoader.builder()
+            .path(path)
+            .nodeStyle(NodeStyle.BLOCK)
+            .defaultOptions { options ->
+                options.shouldCopyDefaults(true).let { opts ->
+                    if (header != null) opts.header(header) else opts
+                }
+            }
+            .build()
+    }
+
+    /**
+     * Creates a YamlConfigurationLoader with custom configuration options.
+     *
+     * @param path Path to the YAML configuration file
+     * @param optionsBuilder Function to customize ConfigurationOptions
+     * @return Configured YamlConfigurationLoader
+     */
+    fun createYamlLoader(
+        path: Path,
+        optionsBuilder: (ConfigurationOptions) -> ConfigurationOptions
+    ): YamlConfigurationLoader {
+        return YamlConfigurationLoader.builder()
+            .path(path)
+            .nodeStyle(NodeStyle.BLOCK)
+            .defaultOptions { options ->
+                optionsBuilder(options.shouldCopyDefaults(true))
+            }
+            .build()
+    }
+}
+
+/**
+ * Ensures the plugin's data folder exists, creating it if necessary.
+ *
+ * @return Path to the plugin's data folder
+ * @throws IllegalStateException if the folder cannot be created
+ */
+fun Plugin.ensureDataFolder(): Path {
+    val folder = dataFolder.toPath()
+    if (!Files.exists(folder)) {
+        Files.createDirectories(folder)
+    }
+    return folder
+}
+
+/**
+ * Loads a configuration object from this loader.
+ *
+ * @param T The configuration class type (must be @ConfigSerializable)
+ * @param default Default value to use if the file doesn't exist or is empty
+ * @return The loaded configuration object
+ * @throws ConfigurateException if loading fails
+ */
+inline fun <reified T : Any> YamlConfigurationLoader.loadConfig(default: T? = null): T {
+    val node = load()
+    return node.get<T>() ?: default ?: throw ConfigurateException(
+        "Failed to load configuration of type ${T::class.simpleName}"
+    )
+}
+
+/**
+ * Loads a configuration object from this loader, returning null if not found.
+ *
+ * @param T The configuration class type (must be @ConfigSerializable)
+ * @return The loaded configuration object, or null if not found
+ * @throws ConfigurateException if loading fails due to parsing errors
+ */
+inline fun <reified T : Any> YamlConfigurationLoader.loadConfigOrNull(): T? {
+    val node = load()
+    return node.get<T>()
+}
+
+/**
+ * Saves a configuration object using this loader.
+ *
+ * This will serialize the object to YAML and write it to the configured path.
+ * If shouldCopyDefaults is enabled, default values will be included in the output.
+ *
+ * @param T The configuration class type (must be @ConfigSerializable)
+ * @param config The configuration object to save
+ * @throws ConfigurateException if saving fails
+ */
+inline fun <reified T : Any> YamlConfigurationLoader.saveConfig(config: T) {
+    val node = createNode()
+    node.set(config)
+    save(node)
+}
+
+/**
+ * Loads a configuration, applies defaults, and saves back to ensure the file
+ * contains all default values.
+ *
+ * This is useful for initial configuration setup where you want to:
+ * 1. Load existing values (if any)
+ * 2. Merge with defaults for any missing values
+ * 3. Save the complete configuration back to disk
+ *
+ * @param T The configuration class type (must be @ConfigSerializable)
+ * @param default The default configuration to use for missing values
+ * @return The loaded configuration with defaults applied
+ * @throws ConfigurateException if loading or saving fails
+ */
+inline fun <reified T : Any> YamlConfigurationLoader.loadAndSaveDefaults(default: T): T {
+    val node = load()
+    val config = node.get<T>() ?: default
+    node.set(config)
+    save(node)
+    return config
+}
+
+/**
+ * Gets a value from this node, or returns the default if not present.
+ *
+ * @param T The value type
+ * @param default Default value to return if the node is empty
+ * @return The value from the node, or the default
+ */
+inline fun <reified T : Any> ConfigurationNode.getOrDefault(default: T): T {
+    return get<T>() ?: default
+}

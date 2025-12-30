@@ -1,0 +1,27 @@
+# Gradle
+.gradle/
+build/
+bin/
+out/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# Kotlin
+*.class
+*.jar
+*.war
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Minecraft server runtime (test environment)
+run/
+
+# Logs
+*.log
+logs/
