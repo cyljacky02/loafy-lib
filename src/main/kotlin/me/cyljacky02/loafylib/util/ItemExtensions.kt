@@ -11,66 +11,14 @@ import org.bukkit.inventory.ItemFlag
 import org.bukkit.inventory.ItemStack
 import org.bukkit.inventory.meta.ItemMeta
 import org.bukkit.inventory.meta.SkullMeta
-import org.bukkit.persistence.PersistentDataContainer
-import org.bukkit.persistence.PersistentDataType
-import org.bukkit.plugin.Plugin
 import java.util.UUID
 
 // ============================================================================
-// Item Key Identification
+// ItemStack & ItemMeta Utility Extensions
 // ============================================================================
-
-/** PDC key used for item identification */
-private val ITEM_KEY = NamespacedKey("loafylib", "item_key")
-
-/**
- * Marks this item with a unique identifier key.
- * Uses PersistentDataContainer for reliable identification across server restarts.
- *
- * ```kotlin
- * val wand = ItemStack(Material.STICK).edit {
- *     name("<gold>Magic Wand</gold>".mini())
- * }.markAs(plugin, "magic_wand")
- *
- * // Later, check if an item is this wand:
- * if (item.hasItemKey(NamespacedKey(plugin, "magic_wand"))) { ... }
- * ```
- */
-fun ItemStack.markAs(plugin: Plugin, key: String): ItemStack {
-    return markAs(NamespacedKey(plugin, key))
-}
-
-/**
- * Marks this item with a NamespacedKey identifier.
- */
-fun ItemStack.markAs(key: NamespacedKey): ItemStack {
-    editMeta { meta ->
-        meta.persistentDataContainer.setString(ITEM_KEY, key.toString())
-    }
-    return this
-}
-
-/**
- * Gets the item key if this item was marked with [markAs], or null otherwise.
- */
-fun ItemStack.getItemKey(): NamespacedKey? {
-    val keyString = itemMeta?.persistentDataContainer?.getString(ITEM_KEY) ?: return null
-    return NamespacedKey.fromString(keyString)
-}
-
-/**
- * Checks if this item has the specified key.
- *
- * ```kotlin
- * val wandKey = NamespacedKey(plugin, "magic_wand")
- * if (event.item?.hasItemKey(wandKey) == true) {
- *     // Handle wand interaction
- * }
- * ```
- */
-fun ItemStack.hasItemKey(key: NamespacedKey): Boolean {
-    return getItemKey() == key
-}
+// Pure item utilities: editing, display, enchantments, flags, models.
+// For PDC operations, see me.cyljacky02.loafylib.pdc package.
+// ============================================================================
 
 /**
  * Edits the ItemMeta of this ItemStack using a DSL block.
@@ -78,8 +26,8 @@ fun ItemStack.hasItemKey(key: NamespacedKey): Boolean {
  *
  * ```kotlin
  * val sword = ItemStack(Material.DIAMOND_SWORD).edit {
- *     customName(Component.text("Excalibur").noItalic())
- *     lore(listOf(Component.text("A legendary blade").noItalic()))
+ *     name(Component.text("Excalibur"))
+ *     loreLines(Component.text("A legendary blade"))
  * }
  * ```
  */
@@ -102,6 +50,10 @@ inline fun <reified M : ItemMeta> ItemStack.editTyped(crossinline block: M.() ->
     editMeta(M::class.java) { it.block() }
     return this
 }
+
+// ============================================================================
+// Display Name & Lore
+// ============================================================================
 
 /**
  * Sets the custom name with automatic italic disabled.
@@ -136,6 +88,10 @@ fun ItemMeta.loreLines(vararg lines: Component) {
 fun ItemMeta.loreLines(lines: List<Component>) {
     lore(lines.map { it.noItalic() })
 }
+
+// ============================================================================
+// Player Heads
+// ============================================================================
 
 /**
  * Creates a player head ItemStack from a base64 skin texture.
@@ -219,13 +175,6 @@ fun ItemMeta.enchant(enchantment: Enchantment, level: Int = 1) {
 }
 
 /**
- * Removes an enchantment from this item.
- */
-fun ItemMeta.removeEnchant(enchantment: Enchantment) {
-    removeEnchant(enchantment)
-}
-
-/**
  * Removes all enchantments from this item.
  */
 fun ItemMeta.clearEnchants() {
@@ -266,13 +215,11 @@ fun ItemMeta.hideAll() {
  *
  * ```kotlin
  * val glowingItem = ItemStack(Material.PAPER).shiny()
- * val noGlow = ItemStack(Material.DIAMOND_SWORD).shiny(false) // remove glow from enchanted item
+ * val noGlow = ItemStack(Material.DIAMOND_SWORD).shiny(false)
  * ```
  */
 fun ItemStack.shiny(glowing: Boolean = true): ItemStack {
-    editMeta { meta ->
-        meta.setEnchantmentGlintOverride(glowing)
-    }
+    editMeta(ItemMeta::class.java) { it.setEnchantmentGlintOverride(glowing) }
     return this
 }
 
@@ -299,12 +246,10 @@ fun ItemMeta.unbreakable(unbreakable: Boolean = true) {
  *
  * ```kotlin
  * val customItem = ItemStack(Material.PAPER).itemModel(NamespacedKey(plugin, "custom_wand"))
- * // or using string
- * val customItem = ItemStack(Material.PAPER).itemModel("myplugin", "custom_wand")
  * ```
  */
 fun ItemStack.itemModel(key: NamespacedKey): ItemStack {
-    editMeta { it.setItemModel(key) }
+    editMeta(ItemMeta::class.java) { it.setItemModel(key) }
     return this
 }
 
@@ -316,9 +261,8 @@ fun ItemStack.itemModel(key: NamespacedKey): ItemStack {
  * val customItem = ItemStack(Material.PAPER).itemModel("myplugin", "custom_wand")
  * ```
  */
-fun ItemStack.itemModel(namespace: String, key: String): ItemStack {
-    return itemModel(NamespacedKey(namespace, key))
-}
+fun ItemStack.itemModel(namespace: String, key: String): ItemStack =
+    itemModel(NamespacedKey(namespace, key))
 
 /**
  * Sets the item model on this ItemMeta.
@@ -340,128 +284,4 @@ fun ItemMeta.itemModel(key: NamespacedKey) {
  */
 fun ItemMeta.itemModel(namespace: String, key: String) {
     setItemModel(NamespacedKey(namespace, key))
-}
-
-// ============================================================================
-// PersistentDataContainer Extensions
-// ============================================================================
-
-/**
- * Edits the PersistentDataContainer of this ItemStack using a DSL block.
- * Returns the ItemStack for chaining.
- *
- * ```kotlin
- * val key = NamespacedKey(plugin, "custom_id")
- * val item = ItemStack(Material.DIAMOND).pdc {
- *     set(key, PersistentDataType.STRING, "my_custom_item")
- * }
- * ```
- */
-fun ItemStack.pdc(block: PersistentDataContainer.() -> Unit): ItemStack {
-    editMeta { meta ->
-        meta.persistentDataContainer.block()
-    }
-    return this
-}
-
-/**
- * Edits the PersistentDataContainer of this ItemMeta using a DSL block.
- *
- * ```kotlin
- * itemMeta.pdc {
- *     set(key, PersistentDataType.INTEGER, 42)
- * }
- * ```
- */
-fun ItemMeta.pdc(block: PersistentDataContainer.() -> Unit) {
-    persistentDataContainer.block()
-}
-
-/**
- * Gets a value from the PersistentDataContainer, or null if not present.
- *
- * ```kotlin
- * val value: String? = pdc.getOrNull(key, PersistentDataType.STRING)
- * ```
- */
-fun <P : Any, C : Any> PersistentDataContainer.getOrNull(key: NamespacedKey, type: PersistentDataType<P, C>): C? {
-    return if (has(key, type)) get(key, type) else null
-}
-
-/**
- * Gets a String value from the PersistentDataContainer, or null if not present.
- */
-fun PersistentDataContainer.getString(key: NamespacedKey): String? =
-    getOrNull(key, PersistentDataType.STRING)
-
-/**
- * Gets an Int value from the PersistentDataContainer, or null if not present.
- */
-fun PersistentDataContainer.getInt(key: NamespacedKey): Int? =
-    getOrNull(key, PersistentDataType.INTEGER)
-
-/**
- * Gets a Long value from the PersistentDataContainer, or null if not present.
- */
-fun PersistentDataContainer.getLong(key: NamespacedKey): Long? =
-    getOrNull(key, PersistentDataType.LONG)
-
-/**
- * Gets a Double value from the PersistentDataContainer, or null if not present.
- */
-fun PersistentDataContainer.getDouble(key: NamespacedKey): Double? =
-    getOrNull(key, PersistentDataType.DOUBLE)
-
-/**
- * Gets a Boolean value from the PersistentDataContainer, or null if not present.
- */
-fun PersistentDataContainer.getBoolean(key: NamespacedKey): Boolean? =
-    getOrNull(key, PersistentDataType.BOOLEAN)
-
-/**
- * Gets a ByteArray value from the PersistentDataContainer, or null if not present.
- */
-fun PersistentDataContainer.getByteArray(key: NamespacedKey): ByteArray? =
-    getOrNull(key, PersistentDataType.BYTE_ARRAY)
-
-/**
- * Sets a String value in the PersistentDataContainer.
- */
-fun PersistentDataContainer.setString(key: NamespacedKey, value: String) {
-    set(key, PersistentDataType.STRING, value)
-}
-
-/**
- * Sets an Int value in the PersistentDataContainer.
- */
-fun PersistentDataContainer.setInt(key: NamespacedKey, value: Int) {
-    set(key, PersistentDataType.INTEGER, value)
-}
-
-/**
- * Sets a Long value in the PersistentDataContainer.
- */
-fun PersistentDataContainer.setLong(key: NamespacedKey, value: Long) {
-    set(key, PersistentDataType.LONG, value)
-}
-
-/**
- * Sets a Double value in the PersistentDataContainer.
- */
-fun PersistentDataContainer.setDouble(key: NamespacedKey, value: Double) {
-    set(key, PersistentDataType.DOUBLE, value)
-}
-
-/**
- * Sets a Boolean value in the PersistentDataContainer.
- */
-fun PersistentDataContainer.setBoolean(key: NamespacedKey, value: Boolean) {
-    set(key, PersistentDataType.BOOLEAN, value)
-}
-
-/**
- * Sets a ByteArray value in the PersistentDataContainer.
- */
-fun PersistentDataContainer.setByteArray(key: NamespacedKey, value: ByteArray) {
-    set(key, PersistentDataType.BYTE_ARRAY, value)
 }

@@ -1,6 +1,7 @@
 package me.cyljacky02.loafylib.blockdata
 
 import org.bukkit.block.Block
+import org.bukkit.persistence.PersistentDataType
 import org.bukkit.plugin.Plugin
 
 // ============================================================================
@@ -44,7 +45,7 @@ fun Block.getBlockData(plugin: Plugin): BlockPDC {
 fun Block.hasBlockData(plugin: Plugin): Boolean {
     val chunkPdc = chunk.persistentDataContainer
     val blockKey = BlockPDC.createBlockKey(this, plugin)
-    return chunkPdc.has(blockKey, org.bukkit.persistence.PersistentDataType.TAG_CONTAINER)
+    return chunkPdc.has(blockKey, PersistentDataType.TAG_CONTAINER)
 }
 
 /**
@@ -86,15 +87,12 @@ fun Block.isBlockDataProtected(plugin: Plugin): Boolean {
     val chunkPdc = chunk.persistentDataContainer
     val blockKey = BlockPDC.createBlockKey(this, plugin)
     
-    // Get the block's PDC directly from chunk without creating BlockPDC wrapper
-    val blockPdc = chunkPdc.get(blockKey, org.bukkit.persistence.PersistentDataType.TAG_CONTAINER)
+    val blockPdc = chunkPdc.get(blockKey, PersistentDataType.TAG_CONTAINER)
         ?: return false
     
-    // Check protection key directly using cached key
-    return blockPdc.has(BlockDataKeys.PROTECTED, org.bukkit.persistence.PersistentDataType.BYTE) &&
-           blockPdc.get(BlockDataKeys.PROTECTED, org.bukkit.persistence.PersistentDataType.BYTE) == 1.toByte()
+    return blockPdc.has(BlockDataKeys.PROTECTED, PersistentDataType.BYTE) &&
+           blockPdc.get(BlockDataKeys.PROTECTED, PersistentDataType.BYTE) == 1.toByte()
 }
-
 
 // ============================================================================
 // BlockPDC DSL Extensions
@@ -121,168 +119,113 @@ inline fun BlockPDC.edit(block: BlockPDC.() -> Unit): BlockPDC {
 }
 
 // ============================================================================
-// Type-Safe Getters for BlockPDC
+// BlockPDC Type-Safe Getters
+// ============================================================================
+// Note: BlockPDC implements PersistentDataContainer, so it can use the shared
+// extensions from me.cyljacky02.loafylib.pdc.PdcExtensions.
+// These BlockPDC-specific extensions are kept for backwards compatibility
+// and to provide explicit documentation for BlockPDC usage.
 // ============================================================================
 
-/**
- * Gets a String value from this BlockPDC, or null if not present.
- *
- * ```kotlin
- * val value: String? = blockPdc.getString(myKey)
- * ```
- */
+/** Gets a String value from this BlockPDC, or null if not present. */
 fun BlockPDC.getString(key: org.bukkit.NamespacedKey): String? =
-    get(key, org.bukkit.persistence.PersistentDataType.STRING)
+    get(key, PersistentDataType.STRING)
 
-/**
- * Gets a Byte value from this BlockPDC, or null if not present.
- */
+/** Gets a Byte value from this BlockPDC, or null if not present. */
 fun BlockPDC.getByte(key: org.bukkit.NamespacedKey): Byte? =
-    get(key, org.bukkit.persistence.PersistentDataType.BYTE)
+    get(key, PersistentDataType.BYTE)
 
-/**
- * Gets a Short value from this BlockPDC, or null if not present.
- */
+/** Gets a Short value from this BlockPDC, or null if not present. */
 fun BlockPDC.getShort(key: org.bukkit.NamespacedKey): Short? =
-    get(key, org.bukkit.persistence.PersistentDataType.SHORT)
+    get(key, PersistentDataType.SHORT)
 
-/**
- * Gets an Int value from this BlockPDC, or null if not present.
- *
- * ```kotlin
- * val count: Int? = blockPdc.getInt(countKey)
- * ```
- */
+/** Gets an Int value from this BlockPDC, or null if not present. */
 fun BlockPDC.getInt(key: org.bukkit.NamespacedKey): Int? =
-    get(key, org.bukkit.persistence.PersistentDataType.INTEGER)
+    get(key, PersistentDataType.INTEGER)
 
-/**
- * Gets a Long value from this BlockPDC, or null if not present.
- */
+/** Gets a Long value from this BlockPDC, or null if not present. */
 fun BlockPDC.getLong(key: org.bukkit.NamespacedKey): Long? =
-    get(key, org.bukkit.persistence.PersistentDataType.LONG)
+    get(key, PersistentDataType.LONG)
 
-/**
- * Gets a Float value from this BlockPDC, or null if not present.
- */
+/** Gets a Float value from this BlockPDC, or null if not present. */
 fun BlockPDC.getFloat(key: org.bukkit.NamespacedKey): Float? =
-    get(key, org.bukkit.persistence.PersistentDataType.FLOAT)
+    get(key, PersistentDataType.FLOAT)
 
-/**
- * Gets a Double value from this BlockPDC, or null if not present.
- */
+/** Gets a Double value from this BlockPDC, or null if not present. */
 fun BlockPDC.getDouble(key: org.bukkit.NamespacedKey): Double? =
-    get(key, org.bukkit.persistence.PersistentDataType.DOUBLE)
+    get(key, PersistentDataType.DOUBLE)
 
-/**
- * Gets a Boolean value from this BlockPDC, or null if not present.
- */
+/** Gets a Boolean value from this BlockPDC, or null if not present. */
 fun BlockPDC.getBoolean(key: org.bukkit.NamespacedKey): Boolean? =
-    get(key, org.bukkit.persistence.PersistentDataType.BOOLEAN)
+    get(key, PersistentDataType.BOOLEAN)
 
-/**
- * Gets a ByteArray value from this BlockPDC, or null if not present.
- */
+/** Gets a ByteArray value from this BlockPDC, or null if not present. */
 fun BlockPDC.getByteArray(key: org.bukkit.NamespacedKey): ByteArray? =
-    get(key, org.bukkit.persistence.PersistentDataType.BYTE_ARRAY)
+    get(key, PersistentDataType.BYTE_ARRAY)
 
-/**
- * Gets an IntArray value from this BlockPDC, or null if not present.
- */
+/** Gets an IntArray value from this BlockPDC, or null if not present. */
 fun BlockPDC.getIntArray(key: org.bukkit.NamespacedKey): IntArray? =
-    get(key, org.bukkit.persistence.PersistentDataType.INTEGER_ARRAY)
+    get(key, PersistentDataType.INTEGER_ARRAY)
 
-/**
- * Gets a LongArray value from this BlockPDC, or null if not present.
- */
+/** Gets a LongArray value from this BlockPDC, or null if not present. */
 fun BlockPDC.getLongArray(key: org.bukkit.NamespacedKey): LongArray? =
-    get(key, org.bukkit.persistence.PersistentDataType.LONG_ARRAY)
+    get(key, PersistentDataType.LONG_ARRAY)
 
 // ============================================================================
-// Type-Safe Setters for BlockPDC
+// BlockPDC Type-Safe Setters
 // ============================================================================
 
-/**
- * Sets a String value in this BlockPDC.
- *
- * ```kotlin
- * blockPdc.setString(myKey, "value")
- * ```
- */
+/** Sets a String value in this BlockPDC. */
 fun BlockPDC.setString(key: org.bukkit.NamespacedKey, value: String) {
-    set(key, org.bukkit.persistence.PersistentDataType.STRING, value)
+    set(key, PersistentDataType.STRING, value)
 }
 
-/**
- * Sets a Byte value in this BlockPDC.
- */
+/** Sets a Byte value in this BlockPDC. */
 fun BlockPDC.setByte(key: org.bukkit.NamespacedKey, value: Byte) {
-    set(key, org.bukkit.persistence.PersistentDataType.BYTE, value)
+    set(key, PersistentDataType.BYTE, value)
 }
 
-/**
- * Sets a Short value in this BlockPDC.
- */
+/** Sets a Short value in this BlockPDC. */
 fun BlockPDC.setShort(key: org.bukkit.NamespacedKey, value: Short) {
-    set(key, org.bukkit.persistence.PersistentDataType.SHORT, value)
+    set(key, PersistentDataType.SHORT, value)
 }
 
-/**
- * Sets an Int value in this BlockPDC.
- *
- * ```kotlin
- * blockPdc.setInt(countKey, 42)
- * ```
- */
+/** Sets an Int value in this BlockPDC. */
 fun BlockPDC.setInt(key: org.bukkit.NamespacedKey, value: Int) {
-    set(key, org.bukkit.persistence.PersistentDataType.INTEGER, value)
+    set(key, PersistentDataType.INTEGER, value)
 }
 
-/**
- * Sets a Long value in this BlockPDC.
- */
+/** Sets a Long value in this BlockPDC. */
 fun BlockPDC.setLong(key: org.bukkit.NamespacedKey, value: Long) {
-    set(key, org.bukkit.persistence.PersistentDataType.LONG, value)
+    set(key, PersistentDataType.LONG, value)
 }
 
-/**
- * Sets a Float value in this BlockPDC.
- */
+/** Sets a Float value in this BlockPDC. */
 fun BlockPDC.setFloat(key: org.bukkit.NamespacedKey, value: Float) {
-    set(key, org.bukkit.persistence.PersistentDataType.FLOAT, value)
+    set(key, PersistentDataType.FLOAT, value)
 }
 
-/**
- * Sets a Double value in this BlockPDC.
- */
+/** Sets a Double value in this BlockPDC. */
 fun BlockPDC.setDouble(key: org.bukkit.NamespacedKey, value: Double) {
-    set(key, org.bukkit.persistence.PersistentDataType.DOUBLE, value)
+    set(key, PersistentDataType.DOUBLE, value)
 }
 
-/**
- * Sets a Boolean value in this BlockPDC.
- */
+/** Sets a Boolean value in this BlockPDC. */
 fun BlockPDC.setBoolean(key: org.bukkit.NamespacedKey, value: Boolean) {
-    set(key, org.bukkit.persistence.PersistentDataType.BOOLEAN, value)
+    set(key, PersistentDataType.BOOLEAN, value)
 }
 
-/**
- * Sets a ByteArray value in this BlockPDC.
- */
+/** Sets a ByteArray value in this BlockPDC. */
 fun BlockPDC.setByteArray(key: org.bukkit.NamespacedKey, value: ByteArray) {
-    set(key, org.bukkit.persistence.PersistentDataType.BYTE_ARRAY, value)
+    set(key, PersistentDataType.BYTE_ARRAY, value)
 }
 
-/**
- * Sets an IntArray value in this BlockPDC.
- */
+/** Sets an IntArray value in this BlockPDC. */
 fun BlockPDC.setIntArray(key: org.bukkit.NamespacedKey, value: IntArray) {
-    set(key, org.bukkit.persistence.PersistentDataType.INTEGER_ARRAY, value)
+    set(key, PersistentDataType.INTEGER_ARRAY, value)
 }
 
-/**
- * Sets a LongArray value in this BlockPDC.
- */
+/** Sets a LongArray value in this BlockPDC. */
 fun BlockPDC.setLongArray(key: org.bukkit.NamespacedKey, value: LongArray) {
-    set(key, org.bukkit.persistence.PersistentDataType.LONG_ARRAY, value)
+    set(key, PersistentDataType.LONG_ARRAY, value)
 }

@@ -35,6 +35,7 @@ pluginScope.launch {
 - **Per-Player Glowing Entities** - PacketEvents-based glowing with team colors (16), RGB Display entities (unlimited), or invisible Shulker markers (pure glow outline)
 - **Per-Block Persistent Data** - Store custom data on individual blocks using chunk PDC storage
 - **Utility Extensions** - Kotlin-idiomatic helpers for ItemStack, Components, and MiniMessage
+- **PDC Extensions** - Unified marker system for Items, Entities, and Chunks with type-safe helpers
 
 
 ## Installation
@@ -426,14 +427,14 @@ val stack = ItemStack(Material.DIAMOND)
     .shiny()  // Enchantment glint without enchantments
     .itemModel(plugin, "custom_diamond")  // Custom model (1.21+)
 
-// PersistentDataContainer DSL
+// PersistentDataContainer DSL (see PDC Extensions section for full API)
 val item = ItemStack(Material.PAPER).pdc {
     setString(myKey, "custom_value")
     setInt(countKey, 42)
 }
 
 // Read PDC values
-val value = item.itemMeta?.persistentDataContainer?.getString(myKey)
+val value = item.persistentDataContainer.getString(myKey)
 
 // Component utilities
 val component = "<red>Hello <player>!".mini("player" to playerName)
@@ -445,45 +446,74 @@ val componentResolver = "player".placeholder(playerComponent)
 ```
 
 
-### Custom Item Identification
+### PDC Extensions (Items, Entities, Chunks)
 
-Mark items with unique keys for reliable identification across events:
+Unified PDC (PersistentDataContainer) extensions with a consistent marker system:
 
 ```kotlin
-import me.cyljacky02.loafylib.util.*
-import me.cyljacky02.loafylib.event.*
+import me.cyljacky02.loafylib.pdc.*
 
-// Create a custom item with a unique key
+// === Item Markers ===
 val wandKey = NamespacedKey(plugin, "magic_wand")
-
 val wand = ItemStack(Material.STICK).edit {
     name("<gradient:gold:yellow>Magic Wand</gradient>".mini())
-    loreLines("<gray>Right-click to cast a spell".mini())
 }.markAs(wandKey)
 
-// Check items in event handlers
+// Check items
+if (item.hasItemKey(wandKey)) { /* handle wand */ }
+item.unmarkAs(wandKey)  // Remove marker
+
+// === Entity Markers ===
+val bossKey = NamespacedKey(plugin, "boss_mob")
+entity.markAs(bossKey)
+if (entity.hasEntityKey(bossKey)) { /* handle boss */ }
+
+// === Chunk Markers ===
+val claimedKey = NamespacedKey(plugin, "claimed")
+chunk.markAs(claimedKey)
+if (chunk.hasChunkKey(claimedKey)) { /* handle claimed chunk */ }
+
+// === Match Multiple Keys ===
+when (item.matchesAnyKey(wandKey, swordKey, bowKey)) {
+    wandKey -> handleWand()
+    swordKey -> handleSword()
+    null -> { /* not a custom item */ }
+}
+
+// === PDC DSL (works on Item, Entity, Chunk) ===
+item.pdc {
+    setString(myKey, "custom_value")
+    setInt(countKey, 42)
+}
+
+entity.pdc {
+    setDouble(healthKey, 100.0)
+    setInt(levelKey, 5)
+}
+
+chunk.pdc {
+    setString(ownerKey, playerUuid.toString())
+    setLong(claimedAtKey, System.currentTimeMillis())
+}
+```
+
+#### Event Extensions
+
+```kotlin
+import me.cyljacky02.loafylib.event.*
+
 @EventHandler
 suspend fun onInteract(event: PlayerInteractEvent) {
-    // Using extension function (null-safe)
     if (!event.matchesItem(wandKey)) return
-    
-    // Or check directly
-    val item = event.item ?: return
-    if (!item.hasItemKey(wandKey)) return
-    
     // Handle wand interaction...
 }
 
-// Works with block events too
 @EventHandler
 fun onPlace(event: BlockPlaceEvent) {
     if (event.matchesItem(customBlockKey)) {
         // Handle custom block placement
     }
 }
-
-// Get the key from any item
-val key: NamespacedKey? = someItem.getItemKey()
 ```
 
 ### Player Cooldowns
@@ -750,18 +780,12 @@ Lettuce uses a single connection by default (multiplexed). This is intentional -
 
 **ItemExtensions.kt:**
 
-*Item Key Identification:*
-- `ItemStack.markAs(plugin, key)` / `markAs(NamespacedKey)` - Mark item with unique identifier
-- `ItemStack.getItemKey()` - Get item's identifier key (or null)
-- `ItemStack.hasItemKey(key)` - Check if item has specific key
-
 *ItemStack DSL:*
 - `ItemStack.edit {}` - Edit ItemMeta with DSL, returns ItemStack for chaining
 - `ItemStack.editTyped<M> {}` - Type-safe meta editing (e.g., SkullMeta)
 - `ItemStack.amount(n)` - Set amount, returns ItemStack for chaining
 - `ItemStack.shiny(Boolean)` - Add/remove enchantment glint (1.21+)
 - `ItemStack.itemModel(key)` - Set custom item model (1.21+)
-- `ItemStack.pdc {}` - Edit PersistentDataContainer with DSL
 
 *ItemMeta Helpers:*
 - `ItemMeta.name(Component)` - Set custom name with italic disabled
@@ -772,17 +796,45 @@ Lettuce uses a single connection by default (multiplexed). This is intentional -
 - `ItemMeta.hideAll()` - Hide all item flags
 - `ItemMeta.unbreakable(Boolean)` - Set unbreakable state
 - `ItemMeta.itemModel(key)` - Set custom item model
-- `ItemMeta.pdc {}` - Edit PersistentDataContainer
 
 *Player Heads:*
 - `playerHead(base64)` - Create head from base64 texture
 - `playerHead(player)` - Create head from OfflinePlayer
 - `playerHead(uuid)` - Create head from UUID
 
-*PersistentDataContainer:*
+
+### PDC Extensions (me.cyljacky02.loafylib.pdc)
+
+**PdcExtensions.kt** - Shared type-safe helpers for any PersistentDataContainer:
 - `getOrNull(key, type)` - Get value or null
-- `getString/Int/Long/Double/Boolean/ByteArray(key)` - Type-safe getters
-- `setString/Int/Long/Double/Boolean/ByteArray(key, value)` - Type-safe setters
+- `getString/getByte/getShort/getInt/getLong(key)` - Type-safe getters
+- `getFloat/getDouble/getBoolean(key)` - Type-safe getters
+- `getByteArray/getIntArray/getLongArray(key)` - Array getters
+- `setString/setByte/setShort/setInt/setLong(key, value)` - Type-safe setters
+- `setFloat/setDouble/setBoolean(key, value)` - Type-safe setters
+- `setByteArray/setIntArray/setLongArray(key, value)` - Array setters
+
+**ItemPdcExtensions.kt** - Item marker system:
+- `ItemStack.markAs(plugin, key)` / `markAs(NamespacedKey)` - Mark item with identifier
+- `ItemStack.unmarkAs(plugin, key)` - Remove marker
+- `ItemStack.hasItemKey(key)` - Check if item has marker
+- `ItemStack.matchesAnyKey(vararg keys)` - Match against multiple keys
+- `ItemStack.pdc {}` - Edit PDC with DSL (uses Paper's optimized API)
+- `ItemMeta.pdc {}` - Edit ItemMeta's PDC
+
+**EntityPdcExtensions.kt** - Entity marker system:
+- `Entity.markAs(plugin, key)` / `markAs(NamespacedKey)` - Mark entity
+- `Entity.unmarkAs(plugin, key)` - Remove marker
+- `Entity.hasEntityKey(key)` - Check if entity has marker
+- `Entity.matchesAnyKey(vararg keys)` - Match against multiple keys
+- `Entity.pdc {}` - Edit PDC with DSL
+
+**ChunkPdcExtensions.kt** - Chunk marker system:
+- `Chunk.markAs(plugin, key)` / `markAs(NamespacedKey)` - Mark chunk
+- `Chunk.unmarkAs(plugin, key)` - Remove marker
+- `Chunk.hasChunkKey(key)` - Check if chunk has marker
+- `Chunk.matchesAnyKey(vararg keys)` - Match against multiple keys
+- `Chunk.pdc {}` - Edit PDC with DSL
 
 **PlayerCooldowns.kt:**
 - `PlayerCooldowns` - PluginComponent for per-player cooldown management
@@ -836,6 +888,21 @@ Lettuce uses a single connection by default (multiplexed). This is intentional -
 
 
 ## Technical Notes
+
+### PDC Package Architecture
+
+The `pdc/` package provides a unified marker system across Items, Entities, and Chunks:
+
+| File | Purpose | Key Functions |
+|------|---------|---------------|
+| `PdcExtensions.kt` | Shared type-safe getters/setters | `getString`, `setInt`, etc. |
+| `ItemPdcExtensions.kt` | Item markers + DSL | `markAs`, `hasItemKey`, `pdc {}` |
+| `EntityPdcExtensions.kt` | Entity markers + DSL | `markAs`, `hasEntityKey`, `pdc {}` |
+| `ChunkPdcExtensions.kt` | Chunk markers + DSL | `markAs`, `hasChunkKey`, `pdc {}` |
+
+**Why separate from `blockdata/`?** The `blockdata/` package uses `BlockPDC` - a wrapper class that stores data IN chunk PDC with coordinate-based keys. The `pdc/` package provides lightweight markers for direct PDC access on Items, Entities, and Chunks.
+
+**Marker efficiency:** Uses 1-byte `BYTE` markers instead of string values (~97% storage reduction).
 
 ### BlockPDC Key Format
 

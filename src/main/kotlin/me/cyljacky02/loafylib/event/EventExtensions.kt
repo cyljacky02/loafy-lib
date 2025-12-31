@@ -1,6 +1,6 @@
 package me.cyljacky02.loafylib.event
 
-import me.cyljacky02.loafylib.util.hasItemKey
+import me.cyljacky02.loafylib.pdc.hasItemKey
 import org.bukkit.NamespacedKey
 import org.bukkit.event.block.BlockBreakEvent
 import org.bukkit.event.block.BlockPlaceEvent
