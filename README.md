@@ -845,6 +845,7 @@ Lettuce uses a single connection by default (multiplexed). This is intentional -
 - `setex(key, ttlSeconds, value)` - Set with TTL
 - `setnx(key, value)` - Set if not exists
 - `get(key)` - Get value
+- `getdel(key)` - Get value and delete atomically
 
 *Key Operations:*
 - `del(keys...)` - Delete keys
