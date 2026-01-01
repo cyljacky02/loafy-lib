@@ -325,6 +325,7 @@ class LettuceRedisManager(
         script: String,
         keys: List<String>,
         args: List<ByteArray>,
+        outputType: ScriptOutputType,
         resultMapper: (Any?) -> T
     ): T {
         val conn = connection ?: throw RedisConnectionException("Redis client not initialized")
@@ -333,7 +334,7 @@ class LettuceRedisManager(
             val keysArray = keys.toTypedArray()
             val result = conn.async().eval<Any>(
                 script,
-                ScriptOutputType.MULTI,
+                outputType,
                 keysArray,
                 *args.toTypedArray()
             ).await()
@@ -478,6 +479,10 @@ internal class RedisPipelineImpl(
         return track(async.setex(key, ttlSeconds, value))
     }
 
+    override fun setnx(key: String, value: ByteArray): RedisFuture<Boolean> {
+        return track(async.setnx(key, value))
+    }
+
     override fun get(key: String): RedisFuture<ByteArray?> {
         return track(async.get(key))
     }
@@ -552,12 +557,32 @@ internal class RedisPipelineImpl(
         return track(async.zadd(key, score, member))
     }
 
+    override fun zrank(key: String, member: ByteArray): RedisFuture<Long?> {
+        return track(async.zrank(key, member))
+    }
+
+    override fun zrevrank(key: String, member: ByteArray): RedisFuture<Long?> {
+        return track(async.zrevrank(key, member))
+    }
+
+    override fun zscore(key: String, member: ByteArray): RedisFuture<Double?> {
+        return track(async.zscore(key, member))
+    }
+
+    override fun zrem(key: String, vararg members: ByteArray): RedisFuture<Long> {
+        return track(async.zrem(key, *members))
+    }
+
     override fun zrangebyscore(key: String, min: Double, max: Double): RedisFuture<List<ByteArray>> {
         return track(async.zrangebyscore(key, io.lettuce.core.Range.create(min, max)))
     }
 
     override fun zremrangebyscore(key: String, min: Double, max: Double): RedisFuture<Long> {
         return track(async.zremrangebyscore(key, io.lettuce.core.Range.create(min, max)))
+    }
+
+    override fun zcard(key: String): RedisFuture<Long> {
+        return track(async.zcard(key))
     }
 
     // ==================== Generic Command Access ====================

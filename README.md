@@ -297,8 +297,8 @@ class MyComponent(private val redis: RedisManager) : PluginComponent {
     override suspend fun initialize() {
         redis.connect()
         
-        // Register reconnect callback
-        redis.onReconnect {
+        // Register reconnect callback (MUST close handle to prevent memory leaks)
+        reconnectHandle = redis.onReconnect {
             logger.info("Redis reconnected, restoring state...")
         }
     }
@@ -318,8 +318,88 @@ class MyComponent(private val redis: RedisManager) : PluginComponent {
     }
     
     override suspend fun shutdown() {
+        reconnectHandle?.close() // Prevent memory leaks
         redis.shutdown()
     }
+}
+```
+
+#### Reconnect Callback Memory Leak Prevention
+
+The `onReconnect()` method returns an `AutoCloseable` handle that **MUST** be closed when no longer needed:
+
+```kotlin
+class MyPlugin : LoafyPlugin() {
+    private var reconnectHandle: AutoCloseable? = null
+
+    override fun onPluginEnable() {
+        val redis = registry.get<RedisManager>()
+
+        // Register reconnect callback and store the handle
+        reconnectHandle = redis.onReconnect {
+            // Re-register all online players after Redis reconnects
+            server.onlinePlayers.forEach { player ->
+                sessionService.register(player.uniqueId, player.name)
+            }
+        }
+    }
+
+    override fun onPluginDisable() {
+        // CRITICAL: Close the handle to prevent memory leaks
+        reconnectHandle?.close()
+        reconnectHandle = null
+    }
+}
+```
+
+#### Lua Script Execution
+
+Execute atomic Lua scripts with configurable output types:
+
+```kotlin
+// CAS (Compare-And-Swap) script returning INTEGER
+val success = redis.evalScript(
+    script = """
+        if redis.call('GET', KEYS[1]) == ARGV[1] then
+            redis.call('SET', KEYS[1], ARGV[2])
+            return 1
+        end
+        return 0
+    """,
+    keys = listOf("my:key"),
+    args = listOf(oldValue, newValue),
+    outputType = ScriptOutputType.INTEGER  // Avoid type coercion
+) { result -> (result as Long) == 1L }
+
+// Script returning array (default MULTI)
+val results = redis.evalScript(
+    script = "return {KEYS[1], ARGV[1]}",
+    keys = listOf("key1"),
+    args = listOf(value)
+) { result -> result as List<*> }
+```
+
+#### Pipeline Operations
+
+Batch multiple commands for efficiency:
+
+```kotlin
+redis.pipeline {
+    // String operations
+    set("key1", value1)
+    setex("key2", 3600, value2)
+    setnx("key3", value3)  // Set if not exists
+    
+    // Sorted set operations (leaderboards, queues)
+    zadd("leaderboard", 100.0, playerId)
+    zrank("leaderboard", playerId)      // Get rank (lowest first)
+    zrevrank("leaderboard", playerId)   // Get rank (highest first)
+    zscore("leaderboard", playerId)     // Get score
+    zrem("leaderboard", playerId)       // Remove member
+    zcard("leaderboard")                // Get count
+    
+    // For commands not in the interface, use add {}
+    add { zincrby("leaderboard", 10.0, playerId) }
 }
 ```
 
@@ -757,6 +837,41 @@ Lettuce uses a single connection by default (multiplexed). This is intentional -
 - `RedisPipeline` - Redis batch operations
 - `GlowingService` - Per-player glowing entity effects (requires PacketEvents)
 - `BlockDataService` - Per-block persistent data storage
+
+### RedisPipeline Operations
+
+*String Operations:*
+- `set(key, value, ttlSeconds?)` - Set with optional TTL
+- `setex(key, ttlSeconds, value)` - Set with TTL
+- `setnx(key, value)` - Set if not exists
+- `get(key)` - Get value
+
+*Key Operations:*
+- `del(keys...)` - Delete keys
+- `expire(key, ttlSeconds)` - Set TTL
+- `exists(keys...)` - Check existence
+
+*Hash Operations:*
+- `hset/hmset/hget/hgetall/hdel` - Hash field operations
+
+*List Operations:*
+- `lpush/rpush/lrange` - List operations
+
+*Set Operations:*
+- `sadd/smembers/srem` - Set operations
+
+*Sorted Set Operations:*
+- `zadd(key, score, member)` - Add with score
+- `zrank(key, member)` - Get rank (lowest first)
+- `zrevrank(key, member)` - Get rank (highest first)
+- `zscore(key, member)` - Get score
+- `zrem(key, members...)` - Remove members
+- `zrangebyscore(key, min, max)` - Get by score range
+- `zremrangebyscore(key, min, max)` - Remove by score range
+- `zcard(key)` - Get cardinality
+
+*Generic Access:*
+- `add { }` - Execute any Lettuce command
 
 ### Public Classes
 

@@ -33,6 +33,12 @@ interface RedisPipeline {
     fun setex(key: String, ttlSeconds: Long, value: ByteArray): RedisFuture<String>
 
     /**
+     * Sets a key only if it does not exist (SETNX).
+     * Returns true if the key was set, false if it already existed.
+     */
+    fun setnx(key: String, value: ByteArray): RedisFuture<Boolean>
+
+    /**
      * Gets a value by key.
      */
     fun get(key: String): RedisFuture<ByteArray?>
@@ -123,6 +129,29 @@ interface RedisPipeline {
     fun zadd(key: String, score: Double, member: ByteArray): RedisFuture<Long>
 
     /**
+     * Gets the rank of a member in a sorted set (0-based, lowest score first).
+     * Returns null if the member does not exist.
+     */
+    fun zrank(key: String, member: ByteArray): RedisFuture<Long?>
+
+    /**
+     * Gets the reverse rank of a member in a sorted set (0-based, highest score first).
+     * Returns null if the member does not exist.
+     */
+    fun zrevrank(key: String, member: ByteArray): RedisFuture<Long?>
+
+    /**
+     * Gets the score of a member in a sorted set.
+     * Returns null if the member does not exist.
+     */
+    fun zscore(key: String, member: ByteArray): RedisFuture<Double?>
+
+    /**
+     * Removes members from a sorted set.
+     */
+    fun zrem(key: String, vararg members: ByteArray): RedisFuture<Long>
+
+    /**
      * Gets members from a sorted set by score range.
      */
     fun zrangebyscore(key: String, min: Double, max: Double): RedisFuture<List<ByteArray>>
@@ -131,6 +160,11 @@ interface RedisPipeline {
      * Removes members from a sorted set by score range.
      */
     fun zremrangebyscore(key: String, min: Double, max: Double): RedisFuture<Long>
+
+    /**
+     * Gets the number of members in a sorted set.
+     */
+    fun zcard(key: String): RedisFuture<Long>
 
     // ==================== Generic Command Access ====================
 
