@@ -43,6 +43,12 @@ interface RedisPipeline {
      */
     fun get(key: String): RedisFuture<ByteArray?>
 
+    /**
+     * Gets the value of a key and deletes it atomically (GETDEL).
+     * Returns null if the key does not exist.
+     */
+    fun getdel(key: String): RedisFuture<ByteArray?>
+
     // ==================== Key Operations ====================
 
     /**

@@ -487,6 +487,10 @@ internal class RedisPipelineImpl(
         return track(async.get(key))
     }
 
+    override fun getdel(key: String): RedisFuture<ByteArray?> {
+        return track(async.getdel(key))
+    }
+
     // ==================== Key Operations ====================
 
     override fun del(vararg keys: String): RedisFuture<Long> {
