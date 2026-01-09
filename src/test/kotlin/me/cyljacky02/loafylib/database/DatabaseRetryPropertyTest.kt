@@ -26,7 +26,7 @@ class DatabaseRetryPropertyTest : FunSpec({
         useParentHandlers = false 
     }
 
-    context("Property 4: Exponential backoff timing") {
+    context("Exponential backoff timing") {
         
         test("Transient errors retry with exponential backoff delays") {
             runTest {
@@ -113,7 +113,7 @@ class DatabaseRetryPropertyTest : FunSpec({
         }
     }
 
-    context("Property 5: Constraint violations never retry") {
+    context("Constraint violations never retry") {
         
         test("Duplicate entry error (1062) throws immediately without retry") {
             runTest {

@@ -90,10 +90,10 @@ class GlowingServiceStateTest : FunSpec({
     }
 
     // =============================================================================
-    // Property 1: Glow State Round-Trip
+    // Glow State Round-Trip
     // =============================================================================
 
-    context("Property 1: Glow State Round-Trip") {
+    context("Glow State Round-Trip") {
 
         test("setGlowing then isGlowing returns true") {
             val state = createTestableState()
@@ -190,10 +190,10 @@ class GlowingServiceStateTest : FunSpec({
     }
 
     // =============================================================================
-    // Property 3: Display Remove Clears State
+    // Display Remove Clears State
     // =============================================================================
 
-    context("Property 3: Display Remove Clears State") {
+    context("Display Remove Clears State") {
 
         test("removeDisplay removes ID from getActiveDisplays") {
             val state = createTestableState()
@@ -228,10 +228,10 @@ class GlowingServiceStateTest : FunSpec({
     }
 
     // =============================================================================
-    // Property 4: Per-Player State Isolation
+    // Per-Player State Isolation
     // =============================================================================
 
-    context("Property 4: Per-Player State Isolation") {
+    context("Per-Player State Isolation") {
 
         test("P1 glow state is independent of P2") {
             val state = createTestableState()
@@ -286,10 +286,10 @@ class GlowingServiceStateTest : FunSpec({
     }
 
     // =============================================================================
-    // Property 5: Player Disconnect Cleanup
+    // Player Disconnect Cleanup
     // =============================================================================
 
-    context("Property 5: Player Disconnect Cleanup") {
+    context("Player Disconnect Cleanup") {
 
         test("player data is removed on disconnect") {
             val state = createTestableState()
@@ -325,10 +325,10 @@ class GlowingServiceStateTest : FunSpec({
     }
 
     // =============================================================================
-    // Property 7: Team Color Caching
+    // Team Color Caching
     // =============================================================================
 
-    context("Property 7: Team Color Caching") {
+    context("Team Color Caching") {
 
         test("same color is cached in sentTeamColors") {
             val state = createTestableState()

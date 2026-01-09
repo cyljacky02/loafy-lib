@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class RedisCallbackUnitTest : FunSpec({
 
-    context("Property 2: Reconnect callback registration and invocation") {
+    context("Reconnect callback registration and invocation") {
         
         test("Registered callback is invoked on reconnect event") {
             val callbackManager = TestCallbackManager()

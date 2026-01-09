@@ -30,7 +30,7 @@ class SuspendingEventUnitTest : FunSpec({
         unmockkAll()
     }
 
-    context("Property 11: Suspend detection caching") {
+    context("Suspend detection caching") {
         
         test("Suspend handler is invoked correctly") {
             val plugin = mockk<Plugin> {
@@ -84,7 +84,7 @@ class SuspendingEventUnitTest : FunSpec({
         }
     }
 
-    context("Property 12: Dispatcher selection based on event.isAsynchronous") {
+    context("Dispatcher selection based on event.isAsynchronous") {
         
         test("Sync event uses main dispatcher") {
             val plugin = mockk<Plugin> {

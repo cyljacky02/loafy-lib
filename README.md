@@ -36,6 +36,7 @@ pluginScope.launch {
 - **Per-Block Persistent Data** - Store custom data on individual blocks using chunk PDC storage
 - **Utility Extensions** - Kotlin-idiomatic helpers for ItemStack, Components, and MiniMessage
 - **PDC Extensions** - Unified marker system for Items, Entities, and Chunks with type-safe helpers
+- **Safe Location Utilities** - Folia-compatible safe teleport location detection with hazard checking and nearby search
 
 
 ## Installation
@@ -733,6 +734,92 @@ if (glowingService.isAvailable()) {
 **Note:** GlowingService requires [PacketEvents](https://github.com/retrooper/packetevents) as an optional soft dependency. When PacketEvents is not installed, `isAvailable()` returns false and all methods become no-ops (graceful degradation).
 
 
+### Safe Location Utilities
+
+Folia-compatible safe teleport location detection with comprehensive hazard checking:
+
+```kotlin
+import me.cyljacky02.loafylib.location.*
+
+// Check if a location is safe for teleportation
+if (location.isSafe()) {
+    player.teleport(location)
+}
+
+// Find nearest safe location within radius
+val safeSpot = location.findSafeNearby(radiusXZ = 5, radiusY = 10)
+safeSpot?.let { player.teleport(it) }
+
+// Coroutine-friendly (suspending)
+pluginScope.launch {
+    if (location.isSafeSuspend()) {
+        player.teleport(location)
+    }
+    
+    val safe = location.findSafeNearbySuspend(radiusXZ = 3, radiusY = 5)
+    safe?.let { player.teleport(it) }
+}
+
+// Async (CompletableFuture) - safe from any thread
+location.isSafeAsync().thenAccept { isSafe ->
+    if (isSafe) player.teleport(location)
+}
+```
+
+#### Safety Options
+
+Configure safety checks for different use cases:
+
+```kotlin
+// Default - block collision enabled, entity collision disabled
+location.isSafe(SafetyOptions.DEFAULT)
+
+// Fast - skip collision checks for bulk operations (RTP)
+location.isSafe(SafetyOptions.FAST)
+
+// Aquatic - allow water as passable (underwater teleports)
+location.isSafe(SafetyOptions.AQUATIC)
+
+// Strict - all checks including entity collision (spawn points)
+location.isSafe(SafetyOptions.STRICT)
+
+// Custom options
+val options = SafetyOptions(
+    checkCollision = true,      // VoxelShape collision for partial blocks
+    allowWater = false,         // Treat water as passable
+    checkWorldBorder = true,    // World border boundary check
+    checkYBounds = true,        // Y-level bounds check
+    checkEntities = false       // Entity collision (boats, players)
+)
+```
+
+#### Search Profiles
+
+Optimize vertical search strategy for different environments:
+
+```kotlin
+// AUTO (default) - detects Nether and uses optimal strategy
+location.findSafeNearby(profile = SearchProfile.AUTO)
+
+// ALTERNATING - checks origin Y first, then up/down (0, +1, -1, +2, -2...)
+location.findSafeNearby(profile = SearchProfile.ALTERNATING)
+
+// MIDDLE_OUT - starts from middle of Y range, optimal for caves/Nether
+location.findSafeNearby(profile = SearchProfile.MIDDLE_OUT)
+```
+
+**Nether-specific behavior:** When `AUTO` detects Nether, it automatically uses `MIDDLE_OUT` and caps Y at 126 to avoid bedrock ceiling.
+
+#### Hazard Detection
+
+The safety check validates:
+- Solid ground (y-1) that isn't hazardous (lava, magma, campfire, cactus, dripstone)
+- Passable body space (y, y+1) without hazards (fire, lava, sweet berry, wither rose, powder snow)
+- No VoxelShape collision with partial blocks (fences, walls, trapdoors)
+- Within world bounds and world border
+- Optional entity collision (boats, players, armor stands)
+
+
 ## Design Philosophy
 
 LoafyLib uses **manual constructor injection** instead of annotation-based DI frameworks like Spring or Fairy. This is intentional:
@@ -837,6 +924,8 @@ Lettuce uses a single connection by default (multiplexed). This is intentional -
 - `RedisPipeline` - Redis batch operations
 - `GlowingService` - Per-player glowing entity effects (requires PacketEvents)
 - `BlockDataService` - Per-block persistent data storage
+- `SafeLocation` - Safe teleport location detection
+- `SafeLocationSearch` - Nearby safe location search algorithms
 
 ### RedisPipeline Operations
 
@@ -890,6 +979,8 @@ Lettuce uses a single connection by default (multiplexed). This is intentional -
 - `BlockDataEvent` - Base event for block data lifecycle changes
 - `BlockDataRemoveEvent` - Fired when block data is about to be removed
 - `BlockDataMoveEvent` - Fired when block data is about to be moved
+- `SafetyOptions` - Configuration for safe location checks
+- `SearchProfile` - Vertical search strategy for location search
 
 
 ### Utility Extensions (me.cyljacky02.loafylib.util)
@@ -995,6 +1086,37 @@ Lettuce uses a single connection by default (multiplexed). This is intentional -
 - `BlockPDC.setString/setByte/setShort/setInt/setLong(key, value)` - Set values
 - `BlockPDC.setFloat/setDouble/setBoolean(key, value)` - Set values
 - `BlockPDC.setByteArray/setIntArray/setLongArray(key, value)` - Set arrays
+
+### Location Extensions (me.cyljacky02.loafylib.location)
+
+**SafeLocation** - Core safety check utility:
+- `SafeLocation.isSafe(location, options)` - Synchronous safety check
+- `SafeLocation.isSafeAsync(location, options)` - Async safety check (any thread)
+- `SafeLocation.HAZARDOUS_GROUND` - EnumSet of ground hazards (lava, magma, campfire, cactus, dripstone)
+- `SafeLocation.HAZARDOUS_BODY` - EnumSet of body hazards (fire, lava, sweet berry, wither rose, powder snow)
+
+**SafeLocationSearch** - Nearby safe location search:
+- `SafeLocationSearch.findNearest(origin, radiusXZ, radiusY, options, profile)` - Synchronous search
+- `SafeLocationSearch.findNearestAsync(...)` - Async search (any thread)
+
+**SafeLocationExtensions.kt** - Kotlin extension functions:
+- `Location.isSafe(options)` - Check if location is safe
+- `Location.isSafeAsync(options)` - Async safety check
+- `Location.isSafeSuspend(options)` - Coroutine-friendly safety check
+- `Location.findSafeNearby(radiusXZ, radiusY, options, profile)` - Find nearest safe location
+- `Location.findSafeNearbyAsync(...)` - Async search
+- `Location.findSafeNearbySuspend(...)` - Coroutine-friendly search
+
+**SafetyOptions** - Safety check configuration:
+- `DEFAULT` - Block collision enabled, entity collision disabled
+- `FAST` - Collision checking disabled for bulk operations
+- `AQUATIC` - Water allowed as passable
+- `STRICT` - All checks including entity collision
+
+**SearchProfile** - Vertical search strategy:
+- `ALTERNATING` - Origin Y first, then up/down (0, +1, -1, +2, -2...)
+- `MIDDLE_OUT` - Start from middle of Y range (optimal for caves/Nether)
+- `AUTO` - Automatic selection based on world environment
 
 ### Exception Classes
 

@@ -15,7 +15,7 @@ import kotlin.reflect.KClass
  */
 class ComponentRegistryPropertyTest : FunSpec({
 
-    context("Property 7: Topological initialization order") {
+    context("Topological initialization order") {
         
         test("Linear chain: dependencies are initialized before dependents") {
             val initOrder = mutableListOf<String>()
@@ -67,7 +67,7 @@ class ComponentRegistryPropertyTest : FunSpec({
     }
 
 
-    context("Property 8: Reverse shutdown order") {
+    context("Reverse shutdown order") {
         
         test("Shutdown order is reverse of initialization order") {
             val initOrder = mutableListOf<String>()
@@ -90,7 +90,7 @@ class ComponentRegistryPropertyTest : FunSpec({
         }
     }
 
-    context("Property 9: Circular dependency detection") {
+    context("Circular dependency detection") {
         
         test("Direct circular dependency (A -> B -> A) throws IllegalStateException") {
             val componentA = CircularComponentA()
@@ -135,7 +135,7 @@ class ComponentRegistryPropertyTest : FunSpec({
         }
     }
 
-    context("Property 10: Graceful failure rollback") {
+    context("Graceful failure rollback") {
         
         test("When middle component fails, earlier components are shutdown in reverse order") {
             val initOrder = mutableListOf<String>()

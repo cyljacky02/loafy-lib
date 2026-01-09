@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class DispatcherUnitTest : FunSpec({
 
-    context("Property 1: Dispatcher graceful degradation on plugin disable") {
+    context("Dispatcher graceful degradation on plugin disable") {
         
         test("AsyncDispatcher runs task directly when plugin is disabled") {
             val plugin = mockk<Plugin> {

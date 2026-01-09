@@ -83,7 +83,7 @@ class ConfigPropertyTest : FunSpec({
 
 
 
-    context("Property 6: Config round-trip serialization") {
+    context("Config round-trip serialization") {
         
         test("RedisConfig round-trip: serialize to YAML then deserialize produces equivalent object") {
             checkAll(100, redisConfigArb) { original ->
