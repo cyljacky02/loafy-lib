@@ -4,17 +4,20 @@ import org.spongepowered.configurate.objectmapping.ConfigSerializable
 import org.spongepowered.configurate.objectmapping.meta.Comment
 
 /**
- * Configuration data class for MariaDB/MySQL database connection settings.
+ * Configuration data class for MariaDB database connection settings.
  *
  * This class is designed to be serialized/deserialized by Configurate
  * and provides sensible defaults for local development.
  *
+ * Uses MariaDB Connector/J (not MySQL Connector/J) for optimal performance
+ * with MariaDB servers.
+ *
  * @property host Database server hostname
- * @property port Database server port
+ * @property port Database server port (default: 3306)
  * @property database Database name
  * @property username Database username
  * @property password Database password
- * @property poolSize HikariCP connection pool size
+ * @property poolSize HikariCP connection pool size (default: 10)
  */
 @ConfigSerializable
 data class DatabaseConfig(
@@ -46,9 +49,11 @@ data class DatabaseConfig(
     /**
      * Builds a JDBC URL for MariaDB connection.
      *
-     * Uses the MariaDB JDBC driver format with recommended connection parameters:
-     * - useSSL=false: Disable SSL for local development (override in production)
-     * - allowPublicKeyRetrieval=true: Required for some authentication methods
+     * Uses the MariaDB Connector/J JDBC URL format.
+     * Driver-level properties (useServerPrepStmts, prepStmtCacheSize, etc.)
+     * are configured via HikariCP's addDataSourceProperty() method.
+     *
+     * @return JDBC URL in format: jdbc:mariadb://host:port/database
      */
     fun toJdbcUrl(): String = "jdbc:mariadb://$host:$port/$database"
 }
