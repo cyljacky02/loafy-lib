@@ -839,8 +839,22 @@ LoafyLib includes these libraries (no need to add them to your plugin):
 
 | Library | Version | Relocation | Notes |
 |---------|---------|------------|-------|
-| Lettuce | 7.2.1 | `me.cyljacky02.loafylib.libs.lettuce` | Netty excluded (uses Paper's) |
+| Lettuce | 7.2.1 | `me.cyljacky02.loafylib.libs.lettuce` | Most Netty excluded (uses Paper's) |
+| netty-resolver-dns | 4.1.118 | `me.cyljacky02.loafylib.libs.netty.resolver.dns` | Required for Lettuce class loading |
 | InvUI | 2.0.0-alpha.25 | Not relocated | See below |
+
+### Why netty-resolver-dns Must Be Shaded
+
+Lettuce's `DefaultClientResources` class has a static initializer that references `DnsAddressResolverGroup` and `DefaultDnsCnameCache` from `netty-resolver-dns`. This static field is initialized when the class is loaded, **before** any builder configuration is applied:
+
+```java
+// From Lettuce's DefaultClientResources.java
+public static final AddressResolverGroup<?> DEFAULT_ADDRESS_RESOLVER_GROUP = new DnsAddressResolverGroup(
+    new DnsNameResolverBuilder()...
+        .cnameCache(new DefaultDnsCnameCache())...);
+```
+
+Without `netty-resolver-dns` on the classpath, class loading fails with `NoClassDefFoundError: io/netty/resolver/dns/DnsCnameCache`. Paper's bundled Netty doesn't include this module, so we must shade and relocate it.
 
 ### Why InvUI Cannot Be Relocated or Use Library Loader
 

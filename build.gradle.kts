@@ -22,6 +22,8 @@ dependencies {
     // === Libraries loaded by Paper's Library Loader (declared in paper-plugin.yml) ===
     compileOnly("org.jetbrains.kotlin:kotlin-stdlib:2.2.21")
     compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-core:1.9.0")
+    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     compileOnly("com.zaxxer:HikariCP:7.0.2")
     compileOnly("org.mariadb.jdbc:mariadb-java-client:3.5.7")
     compileOnly("org.spongepowered:configurate-hocon:4.2.0")
@@ -30,20 +32,37 @@ dependencies {
     
     // Reactor - required by Lettuce (loaded via library loader, not shaded)
     compileOnly("io.projectreactor:reactor-core:3.8.1")
-    
+
     // Netty - provided by Paper at runtime, needed for compile-time access to DefaultAddressResolverGroup
     compileOnly("io.netty:netty-resolver:4.1.118.Final")
 
     // === Shaded Redis client ===
-    // Lettuce is shaded and relocated, but Netty is NOT relocated
-    // because InvUI needs Paper's native io.netty for packet interception.
-    // We exclude Netty from Lettuce and use Paper's native Netty.
-    // We also exclude Reactor (loaded via library loader to avoid duplication).
+    // Lettuce is shaded and relocated. Most Netty modules are NOT relocated because:
+    // 1. InvUI needs Paper's native io.netty for packet interception
+    // 2. Paper already provides Netty at runtime
+    //
+    // IMPORTANT: We MUST include netty-resolver-dns because Lettuce's DefaultClientResources
+    // has a static initializer that references DnsAddressResolverGroup and DefaultDnsCnameCache.
+    // This static field is initialized when the class is loaded, BEFORE any builder configuration.
+    // Without netty-resolver-dns, class loading fails with NoClassDefFoundError: DnsCnameCache.
+    //
+    // We relocate netty-resolver-dns to avoid conflicts with Paper's Netty (which doesn't include it).
     implementation("io.lettuce:lettuce-core:7.2.1.RELEASE") {
-        exclude(group = "io.netty")
         exclude(group = "io.projectreactor")
         exclude(group = "org.reactivestreams")
+        // Exclude all netty EXCEPT netty-resolver-dns which is required for Lettuce class loading
+        exclude(group = "io.netty", module = "netty-common")
+        exclude(group = "io.netty", module = "netty-handler")
+        exclude(group = "io.netty", module = "netty-transport")
+        exclude(group = "io.netty", module = "netty-buffer")
+        exclude(group = "io.netty", module = "netty-codec")
+        exclude(group = "io.netty", module = "netty-resolver")
+        exclude(group = "io.netty", module = "netty-transport-native-unix-common")
     }
+    
+    // netty-resolver-dns is required for Lettuce's static initializer (DefaultClientResources)
+    // We shade and relocate it to avoid conflicts with Paper's Netty
+    implementation("io.netty:netty-resolver-dns:4.1.118.Final")
 
     // === Shaded dependencies (not on Maven Central or need relocation) ===
     // GUI - InvUI v2 (shaded but NOT relocated)
@@ -112,15 +131,22 @@ tasks.shadowJar {
     minimize {
         // Don't minimize Lettuce - it uses reflection and service loading
         exclude(dependency("io.lettuce:lettuce-core:.*"))
+        // Don't minimize netty-resolver-dns - required for Lettuce's static initializer
+        exclude(dependency("io.netty:netty-resolver-dns:.*"))
         // Don't minimize InvUI - it uses reflection for NMS access
         exclude(dependency("xyz.xenondevs.invui:.*"))
     }
-    
+
     // Relocations
-    // Lettuce relocated (Netty excluded - uses Paper's native Netty)
+    // Lettuce relocated (most Netty excluded - uses Paper's native Netty)
     relocate("io.lettuce", "me.cyljacky02.loafylib.libs.lettuce")
     relocate("redis.clients", "me.cyljacky02.loafylib.libs.redis.clients")
     
+    // Relocate netty-resolver-dns to avoid conflicts with Paper's Netty
+    // This is required because Lettuce's DefaultClientResources static initializer
+    // references DnsAddressResolverGroup and DefaultDnsCnameCache
+    relocate("io.netty.resolver.dns", "me.cyljacky02.loafylib.libs.netty.resolver.dns")
+
     // NOTE: InvUI is NOT relocated - it uses io.netty.channel.ChannelDuplexHandler
     // for packet interception. InvUI v2 injects into Paper's Netty pipeline:
     //   channel.pipeline().addBefore(MC_PACKET_HANDLER_NAME, invuiPacketHandlerName, packetHandler)

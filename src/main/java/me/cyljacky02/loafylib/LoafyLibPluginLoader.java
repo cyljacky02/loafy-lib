@@ -49,6 +49,9 @@ public class LoafyLibPluginLoader implements PluginLoader {
         // Kotlin stdlib and coroutines (must match compile version)
         resolver.addDependency(new Dependency(new DefaultArtifact("org.jetbrains.kotlin:kotlin-stdlib:2.2.21"), null));
         resolver.addDependency(new Dependency(new DefaultArtifact("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2"), null));
+        // Kotlinx Serialization - for Redis sync payloads and general serialization
+        resolver.addDependency(new Dependency(new DefaultArtifact("org.jetbrains.kotlinx:kotlinx-serialization-core:1.9.0"), null));
+        resolver.addDependency(new Dependency(new DefaultArtifact("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0"), null));
         
         // === Database ===
         // HikariCP for connection pooling
@@ -66,6 +69,17 @@ public class LoafyLibPluginLoader implements PluginLoader {
         // Reactor Core - required by Lettuce for reactive streams (not provided by Paper)
         // Lettuce itself is SHADED into the JAR (not loaded here) to avoid classloader conflicts
         resolver.addDependency(new Dependency(new DefaultArtifact("io.projectreactor:reactor-core:3.8.1"), null));
+
+        // NOTE: We intentionally DO NOT load netty-resolver-dns here!
+        // Paper already has Netty loaded. If we load netty-resolver-dns, Lettuce's
+        // DefaultClientResources static initializer creates DnsAddressResolverGroup which
+        // triggers DnsNameResolver.<clinit> to register AttributeKey "io.netty.resolver.dns.pipeline".
+        // Paper's Netty already registered this key → IllegalArgumentException.
+        //
+        // Without netty-resolver-dns on classpath, Lettuce falls back to using
+        // DefaultAddressResolverGroup.INSTANCE (JDK's blocking DNS resolver).
+        // This is configured in LettuceRedisManager via:
+        //   DefaultClientResources.builder().addressResolverGroup(DefaultAddressResolverGroup.INSTANCE)
         
         classpathBuilder.addLibrary(resolver);
     }
