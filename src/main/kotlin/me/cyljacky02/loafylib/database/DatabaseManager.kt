@@ -1,5 +1,6 @@
 package me.cyljacky02.loafylib.database
 
+import me.cyljacky02.loafylib.plugin.PluginComponent
 import java.sql.Connection
 
 /**
@@ -28,8 +29,8 @@ import java.sql.Connection
  * }
  * ```
  */
-interface DatabaseManager {
-    
+interface DatabaseManager : PluginComponent {
+
     /**
      * Initializes the database connection pool.
      *
@@ -39,16 +40,16 @@ interface DatabaseManager {
      *
      * @throws DatabaseInitializationException if the pool cannot be created
      */
-    suspend fun initialize()
-    
+    override suspend fun initialize()
+
     /**
      * Shuts down the database connection pool.
      *
      * This should be called during plugin disable to cleanly close all
      * connections and release resources.
      */
-    suspend fun shutdown()
-    
+    override suspend fun shutdown()
+
     /**
      * Obtains a connection from the pool.
      *
@@ -65,7 +66,7 @@ interface DatabaseManager {
      * @throws java.sql.SQLException if a connection cannot be obtained
      */
     fun getConnection(): Connection
-    
+
     /**
      * Executes a database operation with exponential backoff retry logic.
      *

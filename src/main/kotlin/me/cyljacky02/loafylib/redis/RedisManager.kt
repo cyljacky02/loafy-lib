@@ -3,6 +3,7 @@ package me.cyljacky02.loafylib.redis
 import io.lettuce.core.ScriptOutputType
 import io.lettuce.core.api.async.RedisAsyncCommands
 import kotlinx.coroutines.flow.Flow
+import me.cyljacky02.loafylib.plugin.PluginComponent
 
 /**
  * Interface for Redis connection management and command execution.
@@ -19,7 +20,7 @@ import kotlinx.coroutines.flow.Flow
  *
  * @see LettuceRedisManager for the default implementation
  */
-interface RedisManager {
+interface RedisManager : PluginComponent {
 
     /**
      * Whether the Redis connection is currently established and open.
@@ -28,6 +29,7 @@ interface RedisManager {
 
     /**
      * Establishes connection to Redis server.
+     * This is called by [initialize] as part of the PluginComponent lifecycle.
      *
      * @throws RedisConnectionException if initial connection fails
      */
@@ -41,12 +43,20 @@ interface RedisManager {
     suspend fun disconnect()
 
     /**
+     * Initializes the Redis connection.
+     * Default implementation calls [connect].
+     */
+    override suspend fun initialize() {
+        connect()
+    }
+
+    /**
      * Performs full shutdown including ClientResources.
      *
      * Call this when the application is terminating (e.g., plugin disable).
      * Unlike [disconnect], this also releases thread pools and event loops.
      */
-    suspend fun shutdown()
+    override suspend fun shutdown()
 
     /**
      * Executes a single Redis command asynchronously.

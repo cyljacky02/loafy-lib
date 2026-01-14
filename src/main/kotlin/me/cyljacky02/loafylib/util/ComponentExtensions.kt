@@ -29,16 +29,18 @@ fun String.mini(): Component = MiniMessage.miniMessage().deserialize(this)
 
 /**
  * Parses a MiniMessage string with tag resolvers.
+ * String values have MiniMessage tags stripped, showing only plain text.
  *
  * ```kotlin
  * val component = "<player> joined!".mini("player" to playerName)
+ * val formatted = "Title: <category>".mini("category" to "<gold>My Category") // Shows "My Category"
  * ```
  */
 fun String.mini(vararg placeholders: Pair<String, Any>): Component {
     val resolvers = placeholders.map { (key, value) ->
         when (value) {
             is ComponentLike -> Placeholder.component(key, value)
-            else -> Placeholder.unparsed(key, value.toString())
+            else -> Placeholder.unparsed(key, MiniMessage.miniMessage().stripTags(value.toString()))
         }
     }.toTypedArray()
     return MiniMessage.miniMessage().deserialize(this, *resolvers)
