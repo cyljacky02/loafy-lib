@@ -216,20 +216,14 @@ object SafeLocation {
      * @return true if body space is safe
      */
     private fun isBodySpaceSafe(feetType: Material, headType: Material, options: SafetyOptions): Boolean {
-        // Check feet block
+        // Check feet block for hazardous materials (lava, fire, soul fire)
         if (feetType in HAZARDOUS_BODY) {
-            // Water is in HAZARDOUS_BODY via LAVA check, but water itself is not hazardous
-            // Water is handled separately in isPassable()
-            if (feetType != Material.WATER) {
-                return false
-            }
+            return false
         }
 
-        // Check head block
+        // Check head block for hazardous materials
         if (headType in HAZARDOUS_BODY) {
-            if (headType != Material.WATER) {
-                return false
-            }
+            return false
         }
 
         return true
