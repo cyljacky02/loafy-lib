@@ -16,6 +16,7 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerTe
 import io.github.retrooper.packetevents.util.SpigotConversionUtil
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
+import org.bukkit.Bukkit
 import org.bukkit.Color
 import org.bukkit.Location
 import org.bukkit.block.data.BlockData
@@ -31,7 +32,6 @@ import org.bukkit.util.Transformation
 import java.util.Optional
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * PacketEvents-based implementation of [GlowingService].
@@ -42,7 +42,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * - Display entity glowing with unlimited RGB colors
  *
  * ## Thread Safety
- * All methods are thread-safe using ConcurrentHashMap and AtomicInteger.
+ * All methods are thread-safe using ConcurrentHashMap.
+ * Entity IDs are generated using Paper's thread-safe nextEntityId() API.
  * Packets can be sent from any thread (main, async, or Netty threads).
  *
  * @property plugin the plugin instance for logging
@@ -56,12 +57,6 @@ internal class PacketEventsGlowingService(
      * from multiple threads (main thread, async tasks, Netty threads).
      */
     private val playerData = ConcurrentHashMap<UUID, PlayerGlowData>()
-
-    /**
-     * Virtual entity ID generator. Uses negative IDs starting from -1 and decrementing
-     * to avoid conflicts with server-assigned entity IDs (which are always positive).
-     */
-    private val entityIdGenerator = AtomicInteger(-1)
 
     /**
      * Team name prefix for glow teams. Each color gets its own team.
@@ -184,8 +179,8 @@ internal class PacketEventsGlowingService(
     ): Int {
         if (!receiver.isOnline) return 0
 
-        // Generate unique negative entity ID
-        val entityId = entityIdGenerator.getAndDecrement()
+        // Generate unique entity ID using Paper's safe API (industry best practice)
+        val entityId = Bukkit.getUnsafe().nextEntityId()
         val entityUuid = UUID.randomUUID()
         val receiverUuid = receiver.uniqueId
 
@@ -218,8 +213,8 @@ internal class PacketEventsGlowingService(
     ): Int {
         if (!receiver.isOnline) return 0
 
-        // Generate unique negative entity ID
-        val entityId = entityIdGenerator.getAndDecrement()
+        // Generate unique entity ID using Paper's safe API (industry best practice)
+        val entityId = Bukkit.getUnsafe().nextEntityId()
         val entityUuid = UUID.randomUUID()
         val receiverUuid = receiver.uniqueId
 
@@ -252,8 +247,8 @@ internal class PacketEventsGlowingService(
     ): Int {
         if (!receiver.isOnline) return 0
 
-        // Generate unique negative entity ID
-        val entityId = entityIdGenerator.getAndDecrement()
+        // Generate unique entity ID using Paper's safe API (industry best practice)
+        val entityId = Bukkit.getUnsafe().nextEntityId()
         val entityUuid = UUID.randomUUID()
         val receiverUuid = receiver.uniqueId
 
@@ -388,8 +383,8 @@ internal class PacketEventsGlowingService(
     ): Int {
         if (!receiver.isOnline) return 0
 
-        // Generate unique negative entity ID
-        val entityId = entityIdGenerator.getAndDecrement()
+        // Generate unique entity ID using Paper's safe API (industry best practice)
+        val entityId = Bukkit.getUnsafe().nextEntityId()
         val entityUuid = UUID.randomUUID()
         val receiverUuid = receiver.uniqueId
 
@@ -911,9 +906,4 @@ internal class PacketEventsGlowingService(
      * Gets the player data map. Exposed for testing purposes.
      */
     internal fun getPlayerDataForTesting(): ConcurrentHashMap<UUID, PlayerGlowData> = playerData
-
-    /**
-     * Gets the entity ID generator. Exposed for testing purposes.
-     */
-    internal fun getEntityIdGeneratorForTesting(): AtomicInteger = entityIdGenerator
 }
