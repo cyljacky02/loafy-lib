@@ -6,7 +6,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
 import org.bukkit.Location
 import org.bukkit.World
 import org.bukkit.entity.Entity
@@ -197,7 +199,7 @@ fun Plugin.createPluginScope(): CoroutineScope {
             )
         }
     }
-    
+
     return CoroutineScope(exceptionHandler + SupervisorJob() + asyncDispatcher)
 }
 
@@ -216,7 +218,7 @@ fun createPluginScope(): CoroutineScope {
             throwable.printStackTrace()
         }
     }
-    
+
     return CoroutineScope(exceptionHandler + SupervisorJob() + asyncDispatcher)
 }
 
@@ -373,3 +375,82 @@ suspend inline fun <T> Location.withRegionContext(
     plugin: Plugin,
     crossinline block: suspend CoroutineScope.() -> T
 ): T = withContext(PaperDispatchers.region(plugin, this)) { block() }
+
+
+
+// =============================================================================
+// Delay Functions
+// =============================================================================
+
+/**
+ * Exception thrown when an entity is retired (removed) before a scheduled task runs.
+ *
+ * This can happen when:
+ * - Player disconnects during an animation
+ * - Entity is removed from the world
+ * - Entity teleports to an unloaded chunk (Folia)
+ */
+class EntityRetiredException(message: String = "Entity was retired before task could run") :
+    kotlin.coroutines.cancellation.CancellationException(message)
+
+/**
+ * Suspends the coroutine for the specified number of ticks on the entity's thread.
+ *
+ * Uses EntityScheduler to ensure Folia compatibility. Properly handles:
+ * - Coroutine cancellation (cancels the scheduled task)
+ * - Entity retirement (throws EntityRetiredException)
+ *
+ * ```kotlin
+ * pluginScope.launch {
+ *     try {
+ *         player.delayTicks(plugin, 20) // Wait 1 second
+ *         player.sendMessage("1 second passed!")
+ *     } catch (e: EntityRetiredException) {
+ *         // Player disconnected or entity removed
+ *     }
+ * }
+ * ```
+ *
+ * @param plugin The plugin instance
+ * @param ticks Number of ticks to delay (must be > 0)
+ * @throws EntityRetiredException if the entity is retired before the delay completes
+ * @throws CancellationException if the coroutine is cancelled
+ */
+suspend fun Entity.delayTicks(plugin: Plugin, ticks: Long) {
+    require(ticks > 0) { "Delay ticks must be positive, got: $ticks" }
+
+    kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        val task = scheduler.runDelayed(
+            plugin,
+            { _ ->
+                if (cont.isActive) {
+                    cont.resume(Unit)
+                }
+            },
+            {
+                // Retired callback - entity was removed before task ran
+                if (cont.isActive) {
+                    cont.cancel(EntityRetiredException())
+                }
+            },
+            ticks
+        )
+
+        // Handle coroutine cancellation - cancel the scheduled task
+        cont.invokeOnCancellation {
+            task?.cancel()
+        }
+    }
+}
+
+/**
+ * Suspends the coroutine for the specified number of ticks on the entity's thread.
+ *
+ * @param plugin The plugin instance
+ * @param ticks Number of ticks to delay (Int overload, must be > 0)
+ * @throws EntityRetiredException if the entity is retired before the delay completes
+ * @throws CancellationException if the coroutine is cancelled
+ */
+suspend fun Entity.delayTicks(plugin: Plugin, ticks: Int) {
+    delayTicks(plugin, ticks.toLong())
+}
