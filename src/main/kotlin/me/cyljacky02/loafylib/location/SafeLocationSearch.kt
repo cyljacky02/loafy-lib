@@ -1,5 +1,6 @@
 package me.cyljacky02.loafylib.location
 
+import org.bukkit.HeightMap
 import org.bukkit.Location
 import org.bukkit.World
 import java.util.concurrent.CompletableFuture
@@ -172,14 +173,19 @@ object SafeLocationSearch {
         // Pre-compute squared radius for distance check
         val radiusXZSquared = radiusXZ * radiusXZ
 
-        // Generate vertical sequence based on profile
-        val verticalSequence: (Int, Int) -> Sequence<Int> = when (resolvedProfile) {
-            SearchProfile.MIDDLE_OUT -> { checkX, checkZ ->
+        // Pre-compute vertical sequence based on profile
+        // For ALTERNATING: sequence is identical for all XZ positions, compute once
+        // For MIDDLE_OUT: sequence depends on world bounds, also compute once
+        val verticalYCoordinates: List<Int> = when (resolvedProfile) {
+            SearchProfile.MIDDLE_OUT -> {
                 val startY = SearchProfile.getMiddleOutStartY(world, originY)
-                generateMiddleOutSequence(startY, minHeight, effectiveMaxY)
+                generateMiddleOutSequence(startY, minHeight, effectiveMaxY).toList()
             }
-            else -> { _, _ ->
-                generateAlternatingSequence(radiusY).map { dy -> originY + dy }
+            else -> {
+                generateAlternatingSequence(radiusY)
+                    .map { dy -> originY + dy }
+                    .filter { y -> y >= minHeight && y <= effectiveMaxY }
+                    .toList()
             }
         }
 
@@ -194,16 +200,8 @@ object SafeLocationSearch {
             val checkX = originX + dx
             val checkZ = originZ + dz
 
-            // Iterate vertical sequence
-            for (checkY in verticalSequence(checkX, checkZ)) {
-                // Skip locations outside Y bounds
-                if (checkY < minHeight || checkY > effectiveMaxY) continue
-
-                // For alternating profile, also check radiusY constraint
-                if (resolvedProfile != SearchProfile.MIDDLE_OUT) {
-                    if (kotlin.math.abs(checkY - originY) > radiusY) continue
-                }
-
+            // Iterate pre-computed vertical coordinates
+            for (checkY in verticalYCoordinates) {
                 // Create location for safety check
                 val checkLocation = Location(world, checkX.toDouble(), checkY.toDouble(), checkZ.toDouble())
 
@@ -280,6 +278,104 @@ object SafeLocationSearch {
         return world.getChunkAtAsync(origin).thenApply { _ ->
             // This callback runs on the region thread (Folia) or main thread (Paper)
             findNearest(origin, radiusXZ, radiusY, options, profile)
+        }
+    }
+
+    /**
+     * Asynchronously finds a safe surface location at the given X,Z coordinates.
+     *
+     * This is the **recommended method for RTP and spawn point detection**. It combines:
+     * 1. **HeightMap-based surface detection** - Uses Paper's HeightMap API to find the actual
+     *    surface Y coordinate, preventing teleportation into caves, mineshafts, or ocean floors
+     * 2. **Safety search** - Searches for a safe location near the detected surface
+     *
+     * ## Surface Detection Strategy (Industry Standard)
+     *
+     * Uses `HeightMap.MOTION_BLOCKING` which returns:
+     * - **Water surface** in oceans (player floats, not at ocean floor)
+     * - **Solid ground** on land
+     * - **Top of structures** like trees (search finds ground below)
+     *
+     * ## World Environment Handling
+     *
+     * - **Overworld**: Uses MOTION_BLOCKING heightmap
+     * - **Nether**: Returns middle Y (64) since heightmap is meaningless in caves.
+     *   Uses [SearchProfile.MIDDLE_OUT] for optimal cave searching.
+     * - **End**: Uses MOTION_BLOCKING with void detection (returns null if no surface)
+     *
+     * ## Thread Safety
+     *
+     * This method is **safe to call from any thread**. Uses `getChunkAtAsync()` to ensure
+     * all block access happens on the correct thread (main thread on Paper, region thread on Folia).
+     *
+     * @param world The world to search in
+     * @param x The X coordinate
+     * @param z The Z coordinate
+     * @param radiusXZ Horizontal search radius from surface point (default: 3)
+     * @param radiusY Vertical search radius from surface (default: 5, small since we're at surface)
+     * @param options Safety check options
+     * @return CompletableFuture with safe location, or null if none found (e.g., End void)
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun findSafeSurfaceAsync(
+        world: World,
+        x: Int,
+        z: Int,
+        radiusXZ: Int = 3,
+        radiusY: Int = 5,
+        options: SafetyOptions = SafetyOptions.DEFAULT
+    ): CompletableFuture<Location?> {
+        // Create temp location for chunk loading
+        val tempLocation = Location(world, x.toDouble(), 64.0, z.toDouble())
+
+        return world.getChunkAtAsync(tempLocation).thenApply { _ ->
+            // This callback runs on main thread (Paper) or region thread (Folia)
+            val surfaceLocation = getSurfaceLocation(world, x, z)
+                ?: return@thenApply null // No surface (End void)
+
+            // Search for safe location near surface (already on correct thread)
+            val profile = if (world.environment == World.Environment.NETHER) {
+                SearchProfile.MIDDLE_OUT
+            } else {
+                SearchProfile.ALTERNATING
+            }
+            findNearest(surfaceLocation, radiusXZ, radiusY, options, profile)
+        }
+    }
+
+    /**
+     * Gets the surface location at X,Z using Paper's HeightMap API.
+     *
+     * **Must be called from the correct thread** (main thread on Paper, region thread on Folia).
+     * For thread-safe usage, use [findSafeSurfaceAsync] instead.
+     *
+     * @param world The world
+     * @param x The X coordinate
+     * @param z The Z coordinate
+     * @return Surface location, or null if no surface (End void)
+     */
+    private fun getSurfaceLocation(world: World, x: Int, z: Int): Location? {
+        return when (world.environment) {
+            World.Environment.NETHER -> {
+                // Nether has no meaningful heightmap - use middle Y
+                // SafeLocationSearch with MIDDLE_OUT profile handles cave searching
+                Location(world, x + 0.5, 64.0, z + 0.5)
+            }
+            World.Environment.THE_END -> {
+                // End can have void - check if there's actually a surface
+                val surfaceY = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING)
+                if (surfaceY <= world.minHeight) {
+                    null  // No surface (void)
+                } else {
+                    Location(world, x + 0.5, surfaceY.toDouble(), z + 0.5)
+                }
+            }
+            else -> {
+                // Overworld: Use MOTION_BLOCKING for water surface or solid ground
+                val surfaceY = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING)
+                Location(world, x + 0.5, surfaceY.toDouble(), z + 0.5)
+            }
         }
     }
 }

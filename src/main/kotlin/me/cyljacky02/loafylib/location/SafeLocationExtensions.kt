@@ -118,3 +118,45 @@ suspend fun Location.findSafeNearbySuspend(
     options: SafetyOptions = SafetyOptions.DEFAULT,
     profile: SearchProfile = SearchProfile.AUTO
 ): Location? = findSafeNearbyAsync(radiusXZ, radiusY, options, profile).await()
+
+/**
+ * Asynchronously finds a safe location near the surface at the given X,Z coordinates.
+ *
+ * Uses Paper's HeightMap API to find the surface, then searches for a safe location nearby.
+ * Safe to call from any thread.
+ *
+ * @param x The X coordinate
+ * @param z The Z coordinate
+ * @param radiusXZ Maximum horizontal search radius (default: 3)
+ * @param radiusY Maximum vertical search radius (default: 5)
+ * @param options Configuration options for safety checks (default: [SafetyOptions.DEFAULT])
+ * @return CompletableFuture that completes with a safe surface location, or null if none found
+ * @see SafeLocationSearch.findSafeSurfaceAsync
+ */
+fun org.bukkit.World.findSafeSurfaceAsync(
+    x: Int,
+    z: Int,
+    radiusXZ: Int = 3,
+    radiusY: Int = 5,
+    options: SafetyOptions = SafetyOptions.DEFAULT
+): CompletableFuture<Location?> = SafeLocationSearch.findSafeSurfaceAsync(this, x, z, radiusXZ, radiusY, options)
+
+/**
+ * Coroutine-friendly version of [findSafeSurfaceAsync] that suspends until the search completes.
+ *
+ * Uses [findSafeSurfaceAsync] internally with [CompletableFuture.await].
+ *
+ * @param x The X coordinate
+ * @param z The Z coordinate
+ * @param radiusXZ Maximum horizontal search radius (default: 3)
+ * @param radiusY Maximum vertical search radius (default: 5)
+ * @param options Configuration options for safety checks (default: [SafetyOptions.DEFAULT])
+ * @return A safe surface location, or null if none found
+ */
+suspend fun org.bukkit.World.findSafeSurfaceSuspend(
+    x: Int,
+    z: Int,
+    radiusXZ: Int = 3,
+    radiusY: Int = 5,
+    options: SafetyOptions = SafetyOptions.DEFAULT
+): Location? = findSafeSurfaceAsync(x, z, radiusXZ, radiusY, options).await()
