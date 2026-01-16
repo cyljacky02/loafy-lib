@@ -26,9 +26,9 @@ dependencies {
     compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     compileOnly("com.zaxxer:HikariCP:7.0.2")
     compileOnly("org.mariadb.jdbc:mariadb-java-client:3.5.7")
-    compileOnly("org.spongepowered:configurate-hocon:4.2.0")
-    compileOnly("org.spongepowered:configurate-yaml:4.2.0")
-    compileOnly("org.spongepowered:configurate-extra-kotlin:4.2.0")
+    compileOnly("org.spongepowered:configurate-hocon:4.3.0-SNAPSHOT")
+    compileOnly("org.spongepowered:configurate-yaml:4.3.0-SNAPSHOT")
+    compileOnly("org.spongepowered:configurate-extra-kotlin:4.3.0-SNAPSHOT")
     
     // Reactor - required by Lettuce (loaded via library loader, not shaded)
     compileOnly("io.projectreactor:reactor-core:3.8.1")
@@ -104,13 +104,17 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("com.zaxxer:HikariCP:7.0.2")
     testImplementation("org.mariadb.jdbc:mariadb-java-client:3.5.7")
-    testImplementation("org.spongepowered:configurate-hocon:4.2.0")
-    testImplementation("org.spongepowered:configurate-yaml:4.2.0")
-    testImplementation("org.spongepowered:configurate-extra-kotlin:4.2.0")
+    testImplementation("org.spongepowered:configurate-hocon:4.3.0-SNAPSHOT")
+    testImplementation("org.spongepowered:configurate-yaml:4.3.0-SNAPSHOT")
+    testImplementation("org.spongepowered:configurate-extra-kotlin:4.3.0-SNAPSHOT")
 }
 
 kotlin {
     jvmToolchain(21)
+    compilerOptions {
+        freeCompilerArgs.add("-Xemit-jvm-type-annotations")
+        freeCompilerArgs.add("-Xannotation-default-target=param-property")
+    }
 }
 
 tasks.test {
