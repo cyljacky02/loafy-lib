@@ -24,6 +24,15 @@ import java.util.concurrent.ConcurrentHashMap
  * - relX/relZ: Block coordinates relative to chunk (0-15)
  * - absY: Absolute Y coordinate (full range, e.g., -64 to 320)
  *
+ * ## Thread Safety
+ *
+ * All methods in this service access chunk/block data and require:
+ * - **Paper**: Main server thread
+ * - **Folia**: The region thread that owns the block/chunk
+ *
+ * For async chunk loading, use `World.getChunkAtAsync()` then access block data
+ * in the callback (which runs on the correct thread automatically on Paper).
+ *
  * ## Dirty Block Tracking
  *
  * Blocks modified in the current tick are tracked to prevent data loss during

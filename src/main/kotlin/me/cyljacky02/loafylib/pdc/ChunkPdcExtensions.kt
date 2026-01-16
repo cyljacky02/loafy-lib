@@ -11,6 +11,14 @@ import org.bukkit.plugin.Plugin
 // ============================================================================
 // PDC access for chunks with a lightweight marker system.
 // Same pattern as Item/Entity for API consistency.
+//
+// ## Thread Safety
+// All functions in this file access chunk PDC which requires:
+// - Paper: Main server thread
+// - Folia: The region thread that owns the chunk
+//
+// For async chunk loading, use World.getChunkAtAsync() then access PDC
+// in the callback (which runs on the correct thread automatically).
 // ============================================================================
 
 /** Marker value for chunk identification - uses minimal storage (1 byte) */

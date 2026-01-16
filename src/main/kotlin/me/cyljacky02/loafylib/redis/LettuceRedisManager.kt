@@ -108,6 +108,10 @@ class LettuceRedisManager(
             logger.info("Initializing Redis connection...")
 
             // Create a fresh CoroutineScope for this connection lifecycle.
+            // Uses Dispatchers.IO directly (not asyncDispatcher from scheduler) because:
+            // 1. This scope has its own lifecycle independent of plugin scope
+            // 2. Must survive plugin scope cancellation for graceful shutdown
+            // 3. asyncDispatcher is also backed by Dispatchers.IO, so functionally equivalent
             if (coroutineScope?.isActive != true) {
                 coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
             }
