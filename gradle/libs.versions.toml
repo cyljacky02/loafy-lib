@@ -46,7 +46,7 @@ reactor = "3.8.1"
 
 # --- Shaded ------------------------------------------------------------------
 lettuce = "7.2.1.RELEASE"
-invui = "2.0.0-beta.1"
+invui = "2.3.0"
 
 # --- Provided by Paper at runtime --------------------------------------------
 # These are compiled against but supplied by the server. They are pinned to
@@ -66,7 +66,7 @@ gson = "2.14.0"
 
 # --- Optional soft dependencies (compile-time only) --------------------------
 lamp = "4.0.0-rc.14"
-packetevents = "2.11.1"
+packetevents = "2.13.0"
 worldguard = "7.0.18"
 lands = "7.23.1"
 residence = "6.0.0.1"
