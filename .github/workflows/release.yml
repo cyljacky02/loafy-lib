@@ -87,6 +87,20 @@ jobs:
       - name: Build
         run: ./gradlew build --console=plain
 
+      # Same reasoning as CI: without the report, a release blocked by a test
+      # failure gives nothing to diagnose. A release build cannot simply be
+      # re-run until it passes -- it publishes an artifact.
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-report
+          path: |
+            build/reports/tests/test
+            build/test-results/test
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Cache Paper server jars
         uses: actions/cache@v4
         with:

@@ -97,6 +97,22 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # Gradle's console output reduces a test failure to a class name and a
+      # line number. The assertion message, the actual-vs-expected values and
+      # the seed needed to reproduce a property test all live in the report, so
+      # without this an intermittent failure cannot be diagnosed after the fact
+      # -- only re-run and hoped away.
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: |
+            build/reports/tests/test
+            build/test-results/test
+          if-no-files-found: ignore
+          retention-days: 7
+
   rolling-latest:
     name: Publish rolling latest build
     needs: build

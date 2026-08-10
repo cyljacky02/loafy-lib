@@ -282,8 +282,14 @@ class SafeLocationSearchPropertyTest : FunSpec({
                 Arb.int(50..200),
                 Arb.int(-50..50),
                 Arb.int(-50..50),
-                Arb.float(-180f..180f),
-                Arb.float(-90f..90f)
+                // numericFloat, not float: Arb.float emits NaN as an edge case
+                // even for a bounded range, and Kotest's shouldBe treats
+                // NaN as unequal to NaN. That made this property fail at
+                // random whenever NaN was drawn -- nothing to do with the code
+                // under test, which preserves whatever yaw it is given. A yaw
+                // of NaN is not a case this property is about.
+                Arb.numericFloat(-180f, 180f),
+                Arb.numericFloat(-90f, 90f)
             ) { originY, originX, originZ, originYaw, originPitch ->
                 val world = createSafeWorld()
                 val origin = createLocation(world, originX, originY, originZ, originYaw, originPitch)
