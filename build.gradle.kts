@@ -1,6 +1,6 @@
 plugins {
-    kotlin("jvm") version "2.2.21"
-    id("com.gradleup.shadow") version "9.0.0-beta12"
+    kotlin("jvm") version "2.3.10"
+    id("com.gradleup.shadow") version "9.3.1"
     id("xyz.jpenilla.run-paper") version "2.3.1"
 }
 
@@ -13,6 +13,8 @@ repositories {
     maven("https://repo.spongepowered.org/repository/maven-public/")
     maven("https://repo.xenondevs.xyz/releases")
     maven("https://repo.codemc.io/repository/maven-releases/")
+    maven("https://maven.enginehub.org/repo/") // WorldGuard
+    maven("https://jitpack.io") // LandsAPI
 }
 
 dependencies {
@@ -20,15 +22,16 @@ dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
 
     // === Libraries loaded by Paper's Library Loader (declared in paper-plugin.yml) ===
-    compileOnly("org.jetbrains.kotlin:kotlin-stdlib:2.2.21")
+    compileOnly("org.jetbrains.kotlin:kotlin-stdlib:2.3.10")
+    compileOnly("org.jetbrains.kotlin:kotlin-reflect:2.3.10")
     compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-core:1.9.0")
-    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-core:1.10.0")
+    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
     compileOnly("com.zaxxer:HikariCP:7.0.2")
     compileOnly("org.mariadb.jdbc:mariadb-java-client:3.5.7")
-    compileOnly("org.spongepowered:configurate-hocon:4.3.0-SNAPSHOT")
-    compileOnly("org.spongepowered:configurate-yaml:4.3.0-SNAPSHOT")
-    compileOnly("org.spongepowered:configurate-extra-kotlin:4.3.0-SNAPSHOT")
+    compileOnly("org.spongepowered:configurate-hocon:4.2.0")
+    compileOnly("org.spongepowered:configurate-yaml:4.2.0")
+    compileOnly("org.spongepowered:configurate-extra-kotlin:4.2.0")
     
     // Reactor - required by Lettuce (loaded via library loader, not shaded)
     compileOnly("io.projectreactor:reactor-core:3.8.1")
@@ -69,8 +72,8 @@ dependencies {
     // - Cannot use Paper library loader: InvUI v2 uses paperweight-userdev with NMS code
     // - Cannot relocate: Uses io.netty.channel.ChannelDuplexHandler for packet interception
     // - Shared library pattern: All Loafy plugins use LoafyLib's InvUI instance
-    implementation("xyz.xenondevs.invui:invui:2.0.0-alpha.25")
-    implementation("xyz.xenondevs.invui:invui-kotlin:2.0.0-alpha.25")
+    implementation("xyz.xenondevs.invui:invui:2.0.0-beta.1")
+    implementation("xyz.xenondevs.invui:invui-kotlin:2.0.0-beta.1")
     
     // Commands - Lamp (NOT shaded - each dependent plugin should shade their own copy)
     // Lamp's BukkitLamp.builder(plugin) binds commands to a specific plugin instance,
@@ -86,6 +89,20 @@ dependencies {
     // PacketEvents - optional soft dependency for glowing entity support
     compileOnly("com.github.retrooper:packetevents-spigot:2.11.1")
 
+    // WorldGuard - optional soft dependency for protection checking
+    compileOnly("com.sk89q.worldguard:worldguard-bukkit:7.0.13")
+
+    // Lands - optional soft dependency for protection checking
+    compileOnly("com.github.angeschossen:LandsAPI:7.23.1")
+
+    // Residence - optional soft dependency for protection checking
+    compileOnly("com.github.Zrips:Residence:6.0.0.1") {
+        exclude(group = "org.dynmap", module = "dynmap-api")
+    }
+
+    // GriefPrevention - optional soft dependency for protection checking
+    compileOnly("com.github.GriefPrevention:GriefPrevention:18.0.0")
+
     // Testing - Kotest
     testImplementation("io.kotest:kotest-runner-junit5-jvm:6.0.7")
     testImplementation("io.kotest:kotest-assertions-core-jvm:6.0.7")
@@ -98,15 +115,16 @@ dependencies {
 
     // Paper API for tests (needed for Plugin interface, etc.)
     testImplementation("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+    testImplementation("com.github.retrooper:packetevents-spigot:2.11.1")
 
     // Library loader deps for tests (since they're compileOnly for main)
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("com.zaxxer:HikariCP:7.0.2")
     testImplementation("org.mariadb.jdbc:mariadb-java-client:3.5.7")
-    testImplementation("org.spongepowered:configurate-hocon:4.3.0-SNAPSHOT")
-    testImplementation("org.spongepowered:configurate-yaml:4.3.0-SNAPSHOT")
-    testImplementation("org.spongepowered:configurate-extra-kotlin:4.3.0-SNAPSHOT")
+    testImplementation("org.spongepowered:configurate-hocon:4.2.0")
+    testImplementation("org.spongepowered:configurate-yaml:4.2.0")
+    testImplementation("org.spongepowered:configurate-extra-kotlin:4.2.0")
 }
 
 kotlin {
@@ -119,6 +137,7 @@ kotlin {
 
 tasks.test {
     useJUnitPlatform()
+    maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(1)
 }
 
 tasks.processResources {

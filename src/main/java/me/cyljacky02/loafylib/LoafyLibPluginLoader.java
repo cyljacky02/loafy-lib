@@ -49,17 +49,21 @@ public class LoafyLibPluginLoader implements PluginLoader {
                 // === Kotlin ===
                 // Kotlin stdlib and coroutines (must match compile version)
                 resolver.addDependency(
-                                new Dependency(new DefaultArtifact("org.jetbrains.kotlin:kotlin-stdlib:2.2.21"), null));
+                                new Dependency(new DefaultArtifact("org.jetbrains.kotlin:kotlin-stdlib:2.3.10"), null));
+                // kotlin-reflect is required by configurate-extra-kotlin to instantiate Kotlin data classes
+                // using default constructor arguments.
+                resolver.addDependency(
+                                new Dependency(new DefaultArtifact("org.jetbrains.kotlin:kotlin-reflect:2.3.10"), null));
                 resolver.addDependency(
                                 new Dependency(new DefaultArtifact(
                                                 "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2"), null));
                 // Kotlinx Serialization - for Redis sync payloads and general serialization
                 resolver.addDependency(
                                 new Dependency(new DefaultArtifact(
-                                                "org.jetbrains.kotlinx:kotlinx-serialization-core:1.9.0"), null));
+                                                "org.jetbrains.kotlinx:kotlinx-serialization-core:1.10.0"), null));
                 resolver.addDependency(
                                 new Dependency(new DefaultArtifact(
-                                                "org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0"), null));
+                                                "org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0"), null));
 
                 // === Database ===
                 // HikariCP for connection pooling
@@ -67,18 +71,20 @@ public class LoafyLibPluginLoader implements PluginLoader {
                 // MariaDB JDBC driver
                 resolver.addDependency(new Dependency(new DefaultArtifact("org.mariadb.jdbc:mariadb-java-client:3.5.7"),
                                 null));
+                // SQLite JDBC driver (for local file-based databases)
+                resolver.addDependency(new Dependency(new DefaultArtifact("org.xerial:sqlite-jdbc:3.47.2.0"), null));
 
                 // === Configuration ===
                 // Configurate for YAML/HOCON configuration
                 resolver.addDependency(
                                 new Dependency(new DefaultArtifact(
-                                                "org.spongepowered:configurate-hocon:4.3.0-SNAPSHOT"), null));
+                                                "org.spongepowered:configurate-hocon:4.2.0"), null));
                 resolver.addDependency(
-                                new Dependency(new DefaultArtifact("org.spongepowered:configurate-yaml:4.3.0-SNAPSHOT"),
+                                new Dependency(new DefaultArtifact("org.spongepowered:configurate-yaml:4.2.0"),
                                                 null));
                 resolver.addDependency(
                                 new Dependency(new DefaultArtifact(
-                                                "org.spongepowered:configurate-extra-kotlin:4.3.0-SNAPSHOT"), null));
+                                                "org.spongepowered:configurate-extra-kotlin:4.2.0"), null));
 
                 // === Redis Support ===
                 // Reactor Core - required by Lettuce for reactive streams (not provided by
