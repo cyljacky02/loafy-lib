@@ -52,7 +52,11 @@ class PacketAnimationProvider : AnimationProvider {
     }
 
     override fun freezePlayer(player: Player, frozen: Boolean) {
-        val user = packetManager.getUser(player)
+        // PacketEvents 2.13 makes this nullable: there is no User once the
+        // connection is gone. Every effect here is cosmetic and addressed to
+        // that one player, so a missing connection means there is simply
+        // nothing to send.
+        val user = packetManager.getUser(player) ?: return
         
         if (frozen) {
             // Send slowness effect packet (client-side only)
@@ -119,7 +123,11 @@ class PacketAnimationProvider : AnimationProvider {
         stayTicks: Int,
         fadeOutTicks: Int
     ) {
-        val user = packetManager.getUser(player)
+        // PacketEvents 2.13 makes this nullable: there is no User once the
+        // connection is gone. Every effect here is cosmetic and addressed to
+        // that one player, so a missing connection means there is simply
+        // nothing to send.
+        val user = packetManager.getUser(player) ?: return
         
         // Batch all title packets together
         val timesPacket = WrapperPlayServerSetTitleTimes(fadeInTicks, stayTicks, fadeOutTicks)
@@ -135,7 +143,11 @@ class PacketAnimationProvider : AnimationProvider {
     override fun shakeCamera(player: Player, intensity: Float) {
         // Camera shake by sending small position offsets
         // This creates a visual shake effect without actually moving the player
-        val user = packetManager.getUser(player)
+        // PacketEvents 2.13 makes this nullable: there is no User once the
+        // connection is gone. Every effect here is cosmetic and addressed to
+        // that one player, so a missing connection means there is simply
+        // nothing to send.
+        val user = packetManager.getUser(player) ?: return
 
         // Generate random shake offset
         val angle = Random.nextDouble() * 2 * Math.PI
