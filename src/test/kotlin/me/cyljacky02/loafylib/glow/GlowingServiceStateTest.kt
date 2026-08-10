@@ -22,6 +22,26 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
+// =============================================================================
+// Test-only data classes (not part of production code)
+// =============================================================================
+
+private enum class DisplayType { BLOCK, ITEM, TEXT }
+
+private data class DisplayState(
+    val entityId: Int,
+    val type: DisplayType,
+    val location: Location,
+    val color: Color,
+    val transform: Any?
+)
+
+private class TestPlayerGlowData {
+    val glowingEntities: ConcurrentHashMap<Int, GlowState> = ConcurrentHashMap()
+    val activeDisplays: ConcurrentHashMap<Int, DisplayState> = ConcurrentHashMap()
+    val sentTeamColors: ConcurrentHashMap.KeySetView<NamedTextColor, Boolean> = ConcurrentHashMap.newKeySet()
+}
+
 /**
  * Unit tests for GlowingService state management.
  *
@@ -141,18 +161,18 @@ class GlowingServiceStateTest : FunSpec({
     }
 
     // =============================================================================
-    // Property 2 & 6: Display Spawn Returns Unique Negative IDs
+    // Display Spawn Returns Unique Non-Zero IDs
     // =============================================================================
 
-    context("Property 2 & 6: Display Spawn Returns Unique Negative IDs") {
+    context("Display Spawn Returns Unique Non-Zero IDs") {
 
-        test("spawn returns negative entity ID") {
+        test("spawn returns non-zero entity ID") {
             val state = createTestableState()
             val player = mockPlayer(online = true)
 
             val id = state.spawnGlowingBlock(mockLocation(), mockBlockData(), player, Color.RED)
 
-            (id < 0) shouldBe true
+            (id > 0) shouldBe true
         }
 
         test("multiple spawns return unique IDs") {
@@ -175,7 +195,7 @@ class GlowingServiceStateTest : FunSpec({
             state.getActiveDisplays(player) shouldContain id
         }
 
-        test("all display types return unique negative IDs") {
+        test("all display types return unique non-zero IDs") {
             val state = createTestableState()
             val player = mockPlayer(online = true)
 
@@ -185,7 +205,7 @@ class GlowingServiceStateTest : FunSpec({
 
             val ids = setOf(blockId, itemId, textId)
             ids.size shouldBe 3 // All unique
-            ids.all { it < 0 } shouldBe true // All negative
+            ids.all { it > 0 } shouldBe true // All non-zero
         }
     }
 
@@ -503,18 +523,19 @@ class GlowingServiceStateTest : FunSpec({
  * This allows testing the state management logic in isolation.
  */
 private class TestableGlowState {
-    private val playerData = ConcurrentHashMap<UUID, PlayerGlowData>()
-    private val entityIdGenerator = AtomicInteger(-1)
+    private val playerData = ConcurrentHashMap<UUID, TestPlayerGlowData>()
+    private val entityIdGenerator = AtomicInteger(0)
 
     fun setGlowing(entity: Entity, receiver: Player, color: GlowColor?) {
         if (!receiver.isOnline) return
 
         val effectiveColor = color?.namedTextColor ?: NamedTextColor.WHITE
         val entityId = entity.entityId
+        val entityUuid = entity.uniqueId
         val receiverUuid = receiver.uniqueId
 
-        val data = playerData.computeIfAbsent(receiverUuid) { PlayerGlowData() }
-        data.glowingEntities[entityId] = GlowState(entityId, effectiveColor)
+        val data = playerData.computeIfAbsent(receiverUuid) { TestPlayerGlowData() }
+        data.glowingEntities[entityId] = GlowState(entityId, entityUuid, effectiveColor)
         data.sentTeamColors.add(effectiveColor)
     }
 
@@ -546,10 +567,10 @@ private class TestableGlowState {
     ): Int {
         if (!receiver.isOnline) return 0
 
-        val entityId = entityIdGenerator.getAndDecrement()
+        val entityId = entityIdGenerator.incrementAndGet()
         val receiverUuid = receiver.uniqueId
 
-        val data = playerData.computeIfAbsent(receiverUuid) { PlayerGlowData() }
+        val data = playerData.computeIfAbsent(receiverUuid) { TestPlayerGlowData() }
         data.activeDisplays[entityId] = DisplayState(
             entityId = entityId,
             type = DisplayType.BLOCK,
@@ -569,10 +590,10 @@ private class TestableGlowState {
     ): Int {
         if (!receiver.isOnline) return 0
 
-        val entityId = entityIdGenerator.getAndDecrement()
+        val entityId = entityIdGenerator.incrementAndGet()
         val receiverUuid = receiver.uniqueId
 
-        val data = playerData.computeIfAbsent(receiverUuid) { PlayerGlowData() }
+        val data = playerData.computeIfAbsent(receiverUuid) { TestPlayerGlowData() }
         data.activeDisplays[entityId] = DisplayState(
             entityId = entityId,
             type = DisplayType.ITEM,
@@ -592,10 +613,10 @@ private class TestableGlowState {
     ): Int {
         if (!receiver.isOnline) return 0
 
-        val entityId = entityIdGenerator.getAndDecrement()
+        val entityId = entityIdGenerator.incrementAndGet()
         val receiverUuid = receiver.uniqueId
 
-        val data = playerData.computeIfAbsent(receiverUuid) { PlayerGlowData() }
+        val data = playerData.computeIfAbsent(receiverUuid) { TestPlayerGlowData() }
         data.activeDisplays[entityId] = DisplayState(
             entityId = entityId,
             type = DisplayType.TEXT,

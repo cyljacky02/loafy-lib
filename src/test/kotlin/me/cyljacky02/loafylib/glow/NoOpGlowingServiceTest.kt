@@ -94,7 +94,8 @@ class NoOpGlowingServiceTest : FunSpec({
             val logger = mockk<Logger>(relaxed = true)
             val service = NoOpGlowingService(logger)
 
-            service.setGlowing(mockEntity(), mockPlayer(), GlowColor.RED)
+            val entity = mockEntity()
+            service.setGlowing(entity.entityId, entity.uniqueId, mockPlayer(), GlowColor.RED)
 
             verify(exactly = 1) {
                 logger.warning(match<String> { it.contains("PacketEvents") })
@@ -108,9 +109,9 @@ class NoOpGlowingServiceTest : FunSpec({
             val entity = mockEntity()
 
             // Call multiple methods
-            service.setGlowing(entity, player, GlowColor.RED)
-            service.unsetGlowing(entity, player)
-            service.isGlowing(entity, player)
+            service.setGlowing(entity.entityId, entity.uniqueId, player, GlowColor.RED)
+            service.unsetGlowing(entity.entityId, player)
+            service.isGlowing(entity.entityId, player)
             service.spawnGlowingBlock(mockLocation(), mockBlockData(), player, Color.RED)
             service.spawnGlowingItem(mockLocation(), mockItemStack(), player, Color.GREEN)
             service.spawnGlowingText(mockLocation(), Component.text("test"), player, Color.BLUE)
@@ -147,24 +148,33 @@ class NoOpGlowingServiceTest : FunSpec({
             val logger = mockk<Logger>(relaxed = true)
             val service = NoOpGlowingService(logger)
 
+            val entity = mockEntity()
+            val player = mockPlayer()
+
             // Should not throw
-            service.setGlowing(mockEntity(), mockPlayer(), GlowColor.RED)
-            service.setGlowing(mockEntity(), mockPlayer(), null)
+            service.setGlowing(entity.entityId, entity.uniqueId, player, GlowColor.RED)
+            service.setGlowing(entity.entityId, entity.uniqueId, player, null)
         }
 
         test("unsetGlowing does not throw") {
             val logger = mockk<Logger>(relaxed = true)
             val service = NoOpGlowingService(logger)
 
+            val entity = mockEntity()
+            val player = mockPlayer()
+
             // Should not throw
-            service.unsetGlowing(mockEntity(), mockPlayer())
+            service.unsetGlowing(entity.entityId, player)
         }
 
         test("isGlowing does not throw and returns false") {
             val logger = mockk<Logger>(relaxed = true)
             val service = NoOpGlowingService(logger)
 
-            val result = service.isGlowing(mockEntity(), mockPlayer())
+            val entity = mockEntity()
+            val player = mockPlayer()
+
+            val result = service.isGlowing(entity.entityId, player)
 
             result shouldBe false
         }

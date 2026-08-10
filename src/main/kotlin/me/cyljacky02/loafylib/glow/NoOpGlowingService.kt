@@ -4,10 +4,10 @@ import net.kyori.adventure.text.Component
 import org.bukkit.Color
 import org.bukkit.Location
 import org.bukkit.block.data.BlockData
-import org.bukkit.entity.Entity
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
 import org.bukkit.util.Transformation
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.logging.Logger
 
@@ -49,15 +49,15 @@ internal class NoOpGlowingService(
 
     // ==================== Existing Entity Glowing ====================
 
-    override fun setGlowing(entity: Entity, receiver: Player, color: GlowColor?) {
+    override fun setGlowing(entityId: Int, entityUuid: UUID, receiver: Player, color: GlowColor?) {
         logWarningOnce()
     }
 
-    override fun unsetGlowing(entity: Entity, receiver: Player) {
+    override fun unsetGlowing(entityId: Int, receiver: Player) {
         logWarningOnce()
     }
 
-    override fun isGlowing(entity: Entity, receiver: Player): Boolean {
+    override fun isGlowing(entityId: Int, receiver: Player): Boolean {
         logWarningOnce()
         return false
     }

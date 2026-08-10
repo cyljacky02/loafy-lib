@@ -9,19 +9,22 @@ import org.bukkit.entity.Entity
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
 import org.bukkit.util.Transformation
+import java.util.UUID
 
 /**
  * Service interface for managing per-player glowing entity effects.
  *
- * Provides two glowing approaches:
+ * Provides three glowing approaches:
  * 1. **Existing Entity Glowing** - Uses entity metadata flag + team colors (16 NamedTextColors)
  * 2. **Display Entity Glowing** - Uses virtual BlockDisplay/ItemDisplay/TextDisplay with custom RGB glow colors
+ * 3. **Shulker Marker Glowing** - Uses virtual invisible Shulker entities for a pure outline
  *
  * This service requires PacketEvents as a soft dependency. When PacketEvents is not available,
  * [isAvailable] returns false and all methods become no-ops with a single warning logged per session.
  *
  * ## Thread Safety
- * All methods are thread-safe and can be called from any thread (main, async, or Netty threads).
+ * All ID-based methods are thread-safe and can be called from any thread (main, async, or Netty threads).
+ * Entity overloads are convenience wrappers and should only be used when it is safe to access the Entity.
  *
  * ## Usage Example
  * ```kotlin
@@ -29,7 +32,7 @@ import org.bukkit.util.Transformation
  *
  * // Make an existing entity glow for a specific player
  * if (glowingService.isAvailable()) {
- *     glowingService.setGlowing(entity, player, ChatColor.RED)
+ *     glowingService.setGlowing(entity, player, GlowColor.RED)
  * }
  *
  * // Spawn a glowing block with custom RGB color
@@ -66,28 +69,45 @@ interface GlowingService : PluginComponent {
      * Uses team-based coloring which supports 16 [NamedTextColor] values.
      * The glow effect is only visible to the specified receiver.
      *
-     * @param entity the entity to make glow
+     * The glow may be applied with a slight delay if the entity's metadata flags
+     * have not yet been observed via packet interception. This ensures other entity
+     * flags (invisible, on-fire, etc.) are preserved.
+     *
+     * @param entityId the entity's runtime ID
+     * @param entityUuid the entity's UUID (used for team membership)
      * @param receiver the player who will see the glow effect
      * @param color the glow color (null defaults to white)
      */
-    fun setGlowing(entity: Entity, receiver: Player, color: GlowColor? = null)
+    fun setGlowing(entityId: Int, entityUuid: UUID, receiver: Player, color: GlowColor? = null)
+
+    fun setGlowing(entity: Entity, receiver: Player, color: GlowColor? = null) {
+        setGlowing(entity.entityId, entity.uniqueId, receiver, color)
+    }
 
     /**
      * Removes the glowing effect from an entity for a specific player.
      *
-     * @param entity the entity to stop glowing
+     * @param entityId the entity's runtime ID
      * @param receiver the player who should no longer see the glow
      */
-    fun unsetGlowing(entity: Entity, receiver: Player)
+    fun unsetGlowing(entityId: Int, receiver: Player)
+
+    fun unsetGlowing(entity: Entity, receiver: Player) {
+        unsetGlowing(entity.entityId, receiver)
+    }
 
     /**
      * Checks if an entity is currently glowing for a specific player.
      *
-     * @param entity the entity to check
+     * @param entityId the entity's runtime ID
      * @param receiver the player to check visibility for
      * @return true if the entity is glowing for this player
      */
-    fun isGlowing(entity: Entity, receiver: Player): Boolean
+    fun isGlowing(entityId: Int, receiver: Player): Boolean
+
+    fun isGlowing(entity: Entity, receiver: Player): Boolean {
+        return isGlowing(entity.entityId, receiver)
+    }
 
     // ==================== Display Entity Glowing (unlimited RGB) ====================
 
@@ -101,7 +121,7 @@ interface GlowingService : PluginComponent {
      * @param blockData the block data to display
      * @param receiver the player who will see the display
      * @param color the RGB glow color
-     * @return unique negative entity ID for this display
+     * @return unique entity ID for this display, or 0 if no entity was spawned
      */
     fun spawnGlowingBlock(
         location: Location,
@@ -119,7 +139,7 @@ interface GlowingService : PluginComponent {
      * @param itemStack the item to display
      * @param receiver the player who will see the display
      * @param color the RGB glow color
-     * @return unique negative entity ID for this display
+     * @return unique entity ID for this display, or 0 if no entity was spawned
      */
     fun spawnGlowingItem(
         location: Location,
@@ -137,7 +157,7 @@ interface GlowingService : PluginComponent {
      * @param text the text component to display
      * @param receiver the player who will see the display
      * @param color the RGB glow color
-     * @return unique negative entity ID for this display
+     * @return unique entity ID for this display, or 0 if no entity was spawned
      */
     fun spawnGlowingText(
         location: Location,
@@ -198,7 +218,7 @@ interface GlowingService : PluginComponent {
      * @param location the location to spawn the marker (will be block-aligned)
      * @param receiver the player who will see the marker
      * @param color the glow color (one of 16 team colors)
-     * @return unique negative entity ID for this marker
+     * @return unique entity ID for this marker, or 0 if no entity was spawned
      */
     fun spawnGlowingMarker(
         location: Location,
