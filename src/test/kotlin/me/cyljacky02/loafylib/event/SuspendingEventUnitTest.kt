@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import me.cyljacky02.loafylib.scheduler.PaperDispatchers
 import org.bukkit.event.Event
 import org.bukkit.event.EventHandler
@@ -30,57 +31,74 @@ class SuspendingEventUnitTest : FunSpec({
         unmockkAll()
     }
 
-    context("Suspend detection caching") {
-        
-        test("Suspend handler is invoked correctly") {
+    context("Suspend vs regular handlers") {
+
+        test("Suspend handler is invoked when plugin is enabled") {
             val plugin = mockk<Plugin> {
-                every { isEnabled } returns false // Use graceful degradation
+                every { isEnabled } returns true
             }
             val scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
-            
+
             val listener = TestSuspendListener()
             val event = TestEvent(isAsync = false)
-            
-            // Get the method and create executor
+
             val method = listener.javaClass.getDeclaredMethod(
                 "onEvent",
                 TestEvent::class.java,
                 kotlin.coroutines.Continuation::class.java
             )
             method.isAccessible = true
-            
-            val executor = SuspendingEventExecutor(method, plugin, scope)
-            
-            // Execute multiple times
+
+            val dispatcherProvider = SuspendingEventDispatcherProvider { PaperDispatchers.main(plugin) }
+            val executor = SuspendingEventExecutor(method, plugin, scope, dispatcherProvider, true, TestEvent::class.java)
+
+            executor.execute(listener, event)
+
+            // The handler suspends via delay(1), so we need to let it run.
+            runBlocking { delay(10) }
+
+            listener.invocationCount.get() shouldBe 1
+        }
+
+        test("Regular (non-suspend) handler is invoked directly") {
+            val plugin = mockk<Plugin> {
+                every { isEnabled } returns true
+            }
+            val scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
+
+            val listener = TestRegularListener()
+            val event = TestEvent(isAsync = false)
+
+            val method = listener.javaClass.getDeclaredMethod("onEvent", TestEvent::class.java)
+            method.isAccessible = true
+
+            val dispatcherProvider = SuspendingEventDispatcherProvider { PaperDispatchers.main(plugin) }
+            val executor = SuspendingEventExecutor(method, plugin, scope, dispatcherProvider, false, TestEvent::class.java)
+
             repeat(3) {
                 executor.execute(listener, event)
             }
-            
-            // Handler should have been called 3 times
+
             listener.invocationCount.get() shouldBe 3
         }
 
-        test("Regular (non-suspend) handler is invoked correctly") {
+        test("Handlers are skipped when plugin is disabled") {
             val plugin = mockk<Plugin> {
                 every { isEnabled } returns false
             }
             val scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
-            
+
             val listener = TestRegularListener()
             val event = TestEvent(isAsync = false)
-            
+
             val method = listener.javaClass.getDeclaredMethod("onEvent", TestEvent::class.java)
             method.isAccessible = true
-            
-            val executor = SuspendingEventExecutor(method, plugin, scope)
-            
-            // Execute multiple times
-            repeat(3) {
-                executor.execute(listener, event)
-            }
-            
-            // Handler should have been called 3 times
-            listener.invocationCount.get() shouldBe 3
+
+            val dispatcherProvider = SuspendingEventDispatcherProvider { PaperDispatchers.main(plugin) }
+            val executor = SuspendingEventExecutor(method, plugin, scope, dispatcherProvider, false, TestEvent::class.java)
+
+            executor.execute(listener, event)
+            listener.invocationCount.get() shouldBe 0
         }
     }
 
@@ -107,7 +125,7 @@ class SuspendingEventUnitTest : FunSpec({
 
         test("Both sync and async events are handled correctly") {
             val plugin = mockk<Plugin> {
-                every { isEnabled } returns false
+                every { isEnabled } returns true
             }
             val scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
             
@@ -119,8 +137,11 @@ class SuspendingEventUnitTest : FunSpec({
                 kotlin.coroutines.Continuation::class.java
             )
             method.isAccessible = true
-            
-            val executor = SuspendingEventExecutor(method, plugin, scope)
+
+            val dispatcherProvider = SuspendingEventDispatcherProvider { event ->
+                if (event.isAsynchronous) PaperDispatchers.async(plugin) else PaperDispatchers.main(plugin)
+            }
+            val executor = SuspendingEventExecutor(method, plugin, scope, dispatcherProvider, true, TestEvent::class.java)
             
             // Test with sync event
             val syncEvent = TestEvent(isAsync = false)
@@ -129,8 +150,9 @@ class SuspendingEventUnitTest : FunSpec({
             // Test with async event
             val asyncEvent = TestEvent(isAsync = true)
             executor.execute(listener, asyncEvent)
-            
-            // Both should have been handled
+
+            runBlocking { delay(10) }
+
             listener.invocationCount.get() shouldBe 2
         }
     }

@@ -1,14 +1,52 @@
 package me.cyljacky02.loafylib.event
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import me.cyljacky02.loafylib.scheduler.PaperDispatchers
-import org.bukkit.event.*
+import org.bukkit.event.Event
+import org.bukkit.event.EventException
+import org.bukkit.event.EventHandler
+import org.bukkit.event.EventPriority
+import org.bukkit.event.Listener
+import org.bukkit.event.block.BlockEvent
+import org.bukkit.event.entity.EntityEvent
+import org.bukkit.event.inventory.InventoryEvent
+import org.bukkit.event.player.PlayerEvent
+import org.bukkit.event.world.ChunkEvent
 import org.bukkit.plugin.EventExecutor
 import org.bukkit.plugin.Plugin
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
+import kotlin.coroutines.Continuation
+
+fun interface SuspendingEventDispatcherProvider {
+    fun dispatcherFor(event: Event): CoroutineDispatcher
+
+    companion object {
+        fun default(plugin: Plugin): SuspendingEventDispatcherProvider =
+            SuspendingEventDispatcherProvider { event ->
+                if (event.isAsynchronous) {
+                    return@SuspendingEventDispatcherProvider PaperDispatchers.async(plugin)
+                }
+
+                when (event) {
+                    is PlayerEvent -> PaperDispatchers.entity(plugin, event.player)
+                    is EntityEvent -> PaperDispatchers.entity(plugin, event.entity)
+                    is BlockEvent -> PaperDispatchers.region(plugin, event.block.location)
+                    is ChunkEvent -> PaperDispatchers.region(plugin, event.chunk.world, event.chunk.x, event.chunk.z)
+                    is InventoryEvent -> {
+                        val holder = event.view.player
+                        PaperDispatchers.entity(plugin, holder)
+                    }
+
+                    else -> PaperDispatchers.main(plugin)
+                }
+            }
+    }
+}
 
 /**
  * Service for registering event listeners with suspend function support.
@@ -38,9 +76,9 @@ import java.lang.reflect.Method
  *
  * ## Thread Safety
  *
- * - Sync events: Handler starts on main thread, resumes on main thread after suspension
- * - Async events: Handler starts on async thread, resumes on async thread after suspension
- * - Uses `CoroutineStart.UNDISPATCHED` for zero-overhead when no suspension occurs
+ * - Sync events: Handler starts on the calling tick thread (global region / region / entity), and resumes after suspension on the dispatcher provided by [SuspendingEventDispatcherProvider]
+ * - Async events: Handler starts on the calling async thread, and resumes after suspension on the dispatcher provided by [SuspendingEventDispatcherProvider]
+ * - Uses `CoroutineStart.UNDISPATCHED` to run immediately in the current call frame until first suspension, then resume using the coroutine dispatcher
  *
  * ## Design Notes
  *
@@ -48,7 +86,7 @@ import java.lang.reflect.Method
  * - No session management or configuration
  * - No custom event firing (use Paper's standard `callEvent`)
  * - Direct Paper scheduler integration via PluginManager.registerEvent()
- * - Minimal reflection, cached after first call
+ * - Minimal reflection, suspend vs non-suspend is determined during registration
  */
 object SuspendingEventService {
 
@@ -64,8 +102,13 @@ object SuspendingEventService {
      * @param plugin The plugin owning this listener
      * @param scope The coroutine scope for launching suspend handlers
      */
-    fun register(listener: Listener, plugin: Plugin, scope: CoroutineScope) {
-        val handlers = findEventHandlers(listener, plugin, scope)
+    fun register(
+        listener: Listener,
+        plugin: Plugin,
+        scope: CoroutineScope,
+        dispatcherProvider: SuspendingEventDispatcherProvider = SuspendingEventDispatcherProvider.default(plugin)
+    ) {
+        val handlers = findEventHandlers(listener, plugin, scope, dispatcherProvider)
         val pluginManager = plugin.server.pluginManager
 
         for (handler in handlers) {
@@ -86,7 +129,8 @@ object SuspendingEventService {
     private fun findEventHandlers(
         listener: Listener,
         plugin: Plugin,
-        scope: CoroutineScope
+        scope: CoroutineScope,
+        dispatcherProvider: SuspendingEventDispatcherProvider
     ): List<EventHandlerInfo> {
         val result = mutableListOf<EventHandlerInfo>()
 
@@ -104,6 +148,21 @@ object SuspendingEventService {
             val paramCount = method.parameterTypes.size
             if (paramCount < 1 || paramCount > 2) continue
 
+            val isSuspend = when (paramCount) {
+                1 -> false
+                2 -> {
+                    val continuationParam = method.parameterTypes[1]
+                    if (continuationParam != Continuation::class.java) {
+                        plugin.logger.warning(
+                            "Invalid event handler: ${method.name} - second parameter must be Continuation for suspend handlers"
+                        )
+                        continue
+                    }
+                    true
+                }
+                else -> continue
+            }
+
             val eventClass = try {
                 @Suppress("UNCHECKED_CAST")
                 method.parameterTypes[0].asSubclass(Event::class.java) as Class<out Event>
@@ -118,7 +177,7 @@ object SuspendingEventService {
                 eventClass = eventClass,
                 priority = annotation.priority,
                 ignoreCancelled = annotation.ignoreCancelled,
-                executor = SuspendingEventExecutor(method, plugin, scope)
+                executor = SuspendingEventExecutor(method, plugin, scope, dispatcherProvider, isSuspend, eventClass)
             ))
         }
 
@@ -140,63 +199,46 @@ object SuspendingEventService {
 /**
  * Event executor that supports both regular and suspend functions.
  *
- * Uses reflection to detect suspend functions (they have a Continuation parameter)
- * and wraps them in coroutines. Regular functions are called directly.
+ * Suspend vs non-suspend is determined during registration (suspend handlers have a Continuation parameter).
+ * Suspend handlers are wrapped in coroutines; regular functions are called directly.
  */
 internal class SuspendingEventExecutor(
     private val method: Method,
     private val plugin: Plugin,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val dispatcherProvider: SuspendingEventDispatcherProvider,
+    private val isSuspend: Boolean,
+    private val expectedEventClass: Class<out Event>
 ) : EventExecutor {
 
-    // Cached after first invocation - null means not yet determined
-    @Volatile
-    private var isSuspend: Boolean? = null
-
     override fun execute(listener: Listener, event: Event) {
-        try {
-            // Determine dispatcher based on event type
-            val dispatcher = if (event.isAsynchronous) {
-                PaperDispatchers.async(plugin)
-            } else {
-                PaperDispatchers.main(plugin)
+        if (!plugin.isEnabled) return
+        if (scope.coroutineContext[Job]?.isActive == false) return
+
+        // Type safety check - Paper may dispatch parent event types to child handlers
+        if (!expectedEventClass.isInstance(event)) return
+
+        if (!isSuspend) {
+            try {
+                method.invoke(listener, event)
+            } catch (e: InvocationTargetException) {
+                throw EventException(e.cause)
+            } catch (e: Throwable) {
+                throw EventException(e)
             }
+            return
+        }
 
-            // UNDISPATCHED = start immediately on current thread (zero overhead if no suspension)
-            // After suspension, resume on the appropriate dispatcher
-            scope.launch(dispatcher, CoroutineStart.UNDISPATCHED) {
-                invokeHandler(listener, event)
+        val dispatcher = dispatcherProvider.dispatcherFor(event)
+
+        // UNDISPATCHED = start immediately on current thread (zero overhead if no suspension)
+        // After suspension, resume on the appropriate dispatcher
+        scope.launch(dispatcher, CoroutineStart.UNDISPATCHED) {
+            try {
+                method.invokeSuspend(listener, event)
+            } catch (e: InvocationTargetException) {
+                throw (e.cause ?: e)
             }
-
-        } catch (e: InvocationTargetException) {
-            throw EventException(e.cause)
-        } catch (e: Throwable) {
-            throw EventException(e)
-        }
-    }
-
-    /**
-     * Invokes the handler method, detecting suspend vs regular on first call.
-     */
-    private suspend fun invokeHandler(listener: Listener, event: Event) {
-        when (isSuspend) {
-            null -> detectAndInvoke(listener, event)
-            true -> method.invokeSuspend(listener, event)
-            false -> method.invoke(listener, event)
-        }
-    }
-
-    /**
-     * First-call detection: try suspend, fall back to regular.
-     */
-    private suspend fun detectAndInvoke(listener: Listener, event: Event) {
-        try {
-            method.invokeSuspend(listener, event)
-            isSuspend = true
-        } catch (e: IllegalArgumentException) {
-            // Not a suspend function - invoke normally
-            method.invoke(listener, event)
-            isSuspend = false
         }
     }
 }
@@ -206,8 +248,6 @@ internal class SuspendingEventExecutor(
  *
  * This works by passing the current continuation as the last parameter,
  * which is how Kotlin compiles suspend functions.
- *
- * @throws IllegalArgumentException if the method is not a suspend function
  */
 @Suppress("UNCHECKED_CAST")
 internal suspend fun Method.invokeSuspend(obj: Any, vararg args: Any?): Any? =
