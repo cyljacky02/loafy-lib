@@ -90,25 +90,60 @@ else
     UPDATE_TYPE="line"
 fi
 
-# The Java version an artifact demands, read from its Gradle module metadata.
-# Snapshots need the timestamped filename resolved from the version's own
-# maven-metadata first. Several variants declare a version; take the highest.
-required_jdk_for() {
-    local artifact="$1" module_url timestamp
+# URL of an artifact's Gradle module metadata. Snapshots need the timestamped
+# filename resolved from the version's own maven-metadata first.
+module_url_for() {
+    local artifact="$1" timestamp
 
     if [[ "$artifact" == *-SNAPSHOT ]]; then
         timestamp="$(curl -fsSL "$PAPER_REPO/$artifact/maven-metadata.xml" 2>/dev/null \
             | grep -o '<value>[^<]*' | head -n1 | sed 's|<value>||')" || return 0
         [[ -n "$timestamp" ]] || return 0
-        module_url="$PAPER_REPO/$artifact/paper-api-$timestamp.module"
+        echo "$PAPER_REPO/$artifact/paper-api-$timestamp.module"
     else
-        module_url="$PAPER_REPO/$artifact/paper-api-$artifact.module"
+        echo "$PAPER_REPO/$artifact/paper-api-$artifact.module"
     fi
+}
 
-    curl -fsSL "$module_url" 2>/dev/null \
+# The Java version an artifact demands. Several variants declare one; take the
+# highest, since the toolchain has to satisfy all of them.
+required_jdk_for() {
+    local url
+    url="$(module_url_for "$1")" || return 0
+    [[ -n "$url" ]] || return 0
+
+    curl -fsSL "$url" 2>/dev/null \
         | grep -o '"org\.gradle\.jvm\.version"[[:space:]]*:[[:space:]]*[0-9]\+' \
         | grep -o '[0-9]\+$' \
         | sort -rn | head -n1
+}
+
+# The version of a dependency that paper-api itself declares.
+#
+# Used for Guava and Gson: the server provides both, and WorldGuard, WorldEdit
+# and Residence declare `strictly` constraints on them pinned to whatever their
+# target Minecraft shipped. When those disagree with Paper's, resolution fails
+# outright, so our forced versions have to track Paper rather than be pinned by
+# hand -- otherwise a platform bump silently reintroduces the same failure.
+#
+# The metadata is pretty-printed JSON laid out as group, module, then
+# version.requires per dependency; a plain awk walk avoids depending on jq here.
+declared_dependency_version() {
+    local artifact="$1" group="$2" name="$3" url
+    url="$(module_url_for "$artifact")" || return 0
+    [[ -n "$url" ]] || return 0
+
+    curl -fsSL "$url" 2>/dev/null | awk -v want_group="$group" -v want_module="$name" '
+        /"group"/    { gsub(/[",]/, ""); group = $2 }
+        /"module"/   { gsub(/[",]/, ""); module = $2 }
+        /"requires"/ {
+            gsub(/[",]/, "")
+            if (group == want_group && module == want_module) { print $2; exit }
+            # Clear so a later `excludes` block naming the same coordinates
+            # cannot be mistaken for another dependency declaring a version.
+            group = ""; module = ""
+        }
+    '
 }
 
 CURRENT_JDK="$(sed -n 's/^jdk[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$CATALOG" | head -n1)"
@@ -125,6 +160,12 @@ else
     TARGET_JDK="$CURRENT_JDK"
 fi
 
+# Server-provided libraries whose versions Paper dictates. Empty output means
+# the metadata could not be read; callers must leave the catalog alone rather
+# than write a blank.
+TARGET_GUAVA="$(declared_dependency_version "$TARGET" com.google.guava guava || true)"
+TARGET_GSON="$(declared_dependency_version "$TARGET" com.google.code.gson gson || true)"
+
 cat <<EOF
 current=$CURRENT
 currentMinecraft=$CURRENT_MC
@@ -135,4 +176,6 @@ updateType=$UPDATE_TYPE
 currentJdk=$CURRENT_JDK
 requiredJdk=${REQUIRED_JDK:-unknown}
 targetJdk=$TARGET_JDK
+targetGuava=$TARGET_GUAVA
+targetGson=$TARGET_GSON
 EOF

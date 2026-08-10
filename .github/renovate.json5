@@ -51,6 +51,11 @@
       enabled: false,
     },
     {
+      description: "Guava and Gson are forced to whatever paper-api declares, because WorldGuard and friends pin them with `strictly` constraints that fail resolution when they disagree with Paper. The Minecraft update job reads both from paper-api's module metadata, so Renovate must not move them independently.",
+      matchPackageNames: ["com.google.guava:guava", "com.google.code.gson:gson"],
+      enabled: false,
+    },
+    {
       description: "paper-api is owned by the Minecraft bump workflow.",
       matchPackageNames: ["io.papermc.paper:paper-api"],
       enabled: false,
