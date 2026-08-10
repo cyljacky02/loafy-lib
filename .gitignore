@@ -15,12 +15,19 @@ out/
 *.jar
 *.war
 
+# The Gradle wrapper jar must be committed — without it a fresh checkout (and
+# therefore every CI run) cannot bootstrap Gradle at all.
+!gradle/wrapper/gradle-wrapper.jar
+
 # OS
 .DS_Store
 Thumbs.db
 
 # Minecraft server runtime (test environment)
 run/
+
+# Throwaway server directory created by .github/scripts/smoke-test.sh
+.smoke/
 
 # Logs
 *.log

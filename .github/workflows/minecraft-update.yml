@@ -1,0 +1,206 @@
+name: Minecraft update
+
+# Keeps `paper-api` in gradle/libs.versions.toml current.
+#
+# This is deliberately NOT a Renovate rule. A Minecraft bump is a different kind
+# of change from a library bump: the coordinate has to be resolved from what
+# Paper actually published (two artifact schemes exist), it fans out to
+# run-paper and the paper-plugin.yml api-version, and it can only be validated
+# by booting a server on the new version.
+#
+# The default policy stays inside the current release line (1.21.x -> newest
+# 1.21.x). Crossing a line — say 1.21 to Minecraft's calendar-versioned 26.x —
+# is a platform migration and has to be requested by hand.
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      policy:
+        description: 'line = newest in the current release line; latest = newest stable overall (platform jump)'
+        type: choice
+        options: [line, latest]
+        default: line
+        required: true
+
+concurrency:
+  group: minecraft-update
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    name: Check for a newer Paper release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target paper-api version
+        id: resolve
+        run: |
+          .github/scripts/resolve-paper-api.sh "${{ inputs.policy || 'line' }}" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Up to date
+        if: steps.resolve.outputs.updateType == 'none'
+        run: |
+          echo "Already on \`${{ steps.resolve.outputs.current }}\` — nothing to do." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply the new version to the catalog
+        if: steps.resolve.outputs.updateType != 'none'
+        run: |
+          sed -i 's|^paper-api = ".*"$|paper-api = "${{ steps.resolve.outputs.target }}"|' gradle/libs.versions.toml
+          git diff --stat
+
+      - name: Set up JDK 21
+        if: steps.resolve.outputs.updateType != 'none'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - name: Set up Gradle
+        if: steps.resolve.outputs.updateType != 'none'
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      # Validation runs HERE, not on the resulting pull request: pull requests
+      # opened with GITHUB_TOKEN do not trigger workflow runs, so a PR made by
+      # this job would otherwise sit with no CI at all.
+      - name: Build and test
+        id: build
+        if: steps.resolve.outputs.updateType != 'none'
+        continue-on-error: true
+        run: ./gradlew build --console=plain
+
+      - name: Boot smoke test
+        id: smoke
+        if: steps.resolve.outputs.updateType != 'none' && steps.build.outcome == 'success'
+        continue-on-error: true
+        run: .github/scripts/smoke-test.sh --mc "${{ steps.resolve.outputs.targetMinecraft }}"
+
+      - name: Upload boot log
+        if: steps.build.outcome == 'success' && steps.smoke.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-update-boot-log
+          path: .smoke/boot.log
+          if-no-files-found: ignore
+
+      # Composed in a script step rather than inline expressions: GitHub
+      # Actions expressions cannot contain multi-line string literals.
+      - name: Compose the pull request
+        id: pr
+        if: steps.resolve.outputs.updateType != 'none'
+        env:
+          UPDATE_TYPE: ${{ steps.resolve.outputs.updateType }}
+          CURRENT: ${{ steps.resolve.outputs.current }}
+          CURRENT_MC: ${{ steps.resolve.outputs.currentMinecraft }}
+          TARGET: ${{ steps.resolve.outputs.target }}
+          TARGET_MC: ${{ steps.resolve.outputs.targetMinecraft }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$BUILD_OUTCOME" != "success" ]]; then
+            verdict=":x: \`./gradlew build\` failed against the new version."
+            validated=false
+          elif [[ "$SMOKE_OUTCOME" != "success" ]]; then
+            verdict=":x: The build passed, but the server did not boot cleanly."
+            validated=false
+          else
+            verdict=":white_check_mark: Build, tests and the boot smoke test all passed."
+            validated=true
+          fi
+
+          if [[ "$UPDATE_TYPE" == "line" ]]; then
+            title="Platform jump: Paper ${CURRENT_MC} -> ${TARGET_MC}"
+            commit_type="feat"
+            change_desc="**release line** - this is a platform migration"
+            labels=$'minecraft\nplatform-jump'
+          else
+            title="Update Paper ${CURRENT_MC} -> ${TARGET_MC}"
+            commit_type="fix"
+            change_desc="patch within the current release line"
+            labels=$'minecraft\nplatform-patch'
+          fi
+
+          if [[ "$validated" == "false" ]]; then
+            labels="${labels}"$'\nvalidation-failed'
+          fi
+
+          {
+            echo "## Paper \`${CURRENT_MC}\` -> \`${TARGET_MC}\`"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Current | \`${CURRENT}\` |"
+            echo "| Target | \`${TARGET}\` |"
+            echo "| Change | ${change_desc} |"
+            echo ""
+            echo "### Validation"
+            echo ""
+            echo "${verdict}"
+            echo ""
+            echo "Validation ran in [this workflow run](${RUN_URL}) rather than on this pull request, because pull requests opened with \`GITHUB_TOKEN\` do not trigger workflow runs."
+            echo ""
+            echo "### Changing this one line also moves"
+            echo ""
+            echo "- the \`paper-api\` compile dependency"
+            echo "- \`runServer { minecraftVersion(...) }\` for local testing"
+            echo "- \`api-version\` in \`paper-plugin.yml\`"
+            echo "- the Paper build the smoke test boots"
+            echo ""
+            echo "All four are derived from the catalog in \`build.gradle.kts\`, so there is nothing else to edit."
+          } > pr-body.md
+
+          if [[ "$UPDATE_TYPE" == "line" ]]; then
+            {
+              echo ""
+              echo "### :warning: Before merging a platform jump"
+              echo ""
+              echo "- Re-check the shaded stack: InvUI ships NMS code pinned per Minecraft version, and it is deliberately *not* relocated because it injects into Paper's Netty pipeline."
+              echo "- Confirm the soft dependencies (WorldGuard, Lands, Residence, GriefPrevention, PacketEvents) have builds for this version."
+              echo "- Newer Paper lines may require a newer Java runtime than the JDK 21 toolchain this repository pins."
+              echo "- The sibling Loafy plugins consume this library and need the same jump."
+            } >> pr-body.md
+          fi
+
+          {
+            echo "title=${title}"
+            echo "commitType=${commit_type}"
+            echo "labels<<PR_LABELS_EOF"
+            echo "${labels}"
+            echo "PR_LABELS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          cat pr-body.md >> "$GITHUB_STEP_SUMMARY"
+
+      # The pull request is opened even when validation fails. A failing upgrade
+      # PR is the useful artifact for a platform jump — it shows exactly what
+      # breaks — and it is labelled so it can never be mistaken for a clean one.
+      - name: Open pull request
+        if: steps.resolve.outputs.updateType != 'none'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: minecraft/paper-${{ steps.resolve.outputs.targetMinecraft }}
+          base: main
+          add-paths: gradle/libs.versions.toml
+          commit-message: |
+            ${{ steps.pr.outputs.commitType }}(platform): target Paper ${{ steps.resolve.outputs.targetMinecraft }}
+
+            Updates paper-api from ${{ steps.resolve.outputs.current }} to ${{ steps.resolve.outputs.target }}.
+          title: ${{ steps.pr.outputs.title }}
+          body-path: pr-body.md
+          labels: ${{ steps.pr.outputs.labels }}
+          delete-branch: true

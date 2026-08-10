@@ -1,0 +1,120 @@
+# =============================================================================
+# LoafyLib version catalog — the single source of truth for every version.
+#
+# Nothing else in this repo may hardcode a version. In particular, the runtime
+# dependency list used by Paper's library loader is GENERATED from the
+# `paperLibrary` configuration in build.gradle.kts, so compile-time and runtime
+# versions can never drift apart. See LoafyLibPluginLoader.java.
+#
+# Automation:
+#   - libraries below are updated by Renovate      (.github/renovate.json5)
+#   - `paper-api` is updated by the MC bump job    (.github/workflows/minecraft-update.yml)
+# =============================================================================
+
+[versions]
+
+# --- Platform ----------------------------------------------------------------
+# FULL paper-api artifact version. Upstream uses two different schemes:
+#   pre-26.x : "1.21.11-R0.1-SNAPSHOT"
+#   26.x+    : "26.2.build.111-stable"   (Minecraft's calendar versioning)
+# build.gradle.kts parses both to derive the Minecraft version (for run-paper
+# and the smoke test) and the paper-plugin.yml api-version. Do not hand-edit
+# without running `./gradlew build && .github/scripts/smoke-test.sh`.
+paper-api = "1.21.11-R0.1-SNAPSHOT"
+
+# --- Kotlin ------------------------------------------------------------------
+# Deliberately shared by the Kotlin Gradle plugin AND kotlin-stdlib/reflect.
+# The compiler and the stdlib that Paper's library loader fetches at runtime
+# must be the same version, so they are one ref and move as one update.
+kotlin = "2.3.10"
+kotlinx-coroutines = "1.10.2"
+kotlinx-serialization = "1.10.0"
+
+# --- Runtime libraries (fetched by Paper's library loader) -------------------
+hikaricp = "7.0.2"
+mariadb = "3.5.7"
+sqlite = "3.47.2.0"
+configurate = "4.2.0"
+reactor = "3.8.1"
+
+# --- Shaded ------------------------------------------------------------------
+lettuce = "7.2.1.RELEASE"
+invui = "2.0.0-beta.1"
+
+# --- Provided by Paper at runtime --------------------------------------------
+# These are compiled against but supplied by the server. They are pinned to
+# whatever Paper ships and are updated by the MC bump job, never by Renovate
+# (see the disabled rules in .github/renovate.json5). Bumping them on their own
+# produces a green build that compiles against APIs the server does not have.
+netty = "4.1.118.Final"
+adventure = "4.25.0"
+
+# --- Optional soft dependencies (compile-time only) --------------------------
+lamp = "4.0.0-rc.14"
+packetevents = "2.11.1"
+worldguard = "7.0.13"
+lands = "7.23.1"
+residence = "6.0.0.1"
+griefprevention = "18.0.0"
+
+# --- Test --------------------------------------------------------------------
+kotest = "6.0.7"
+mockk = "1.14.2"
+
+# --- Gradle plugins ----------------------------------------------------------
+shadow = "9.3.1"
+run-paper = "2.3.1"
+
+
+[libraries]
+
+paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper-api" }
+
+# Runtime libraries — anything listed in the `paperLibrary` configuration is
+# both compiled against and written into the generated library-loader manifest.
+kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib", version.ref = "kotlin" }
+kotlin-reflect = { module = "org.jetbrains.kotlin:kotlin-reflect", version.ref = "kotlin" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
+kotlinx-serialization-core = { module = "org.jetbrains.kotlinx:kotlinx-serialization-core", version.ref = "kotlinx-serialization" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+hikaricp = { module = "com.zaxxer:HikariCP", version.ref = "hikaricp" }
+mariadb-client = { module = "org.mariadb.jdbc:mariadb-java-client", version.ref = "mariadb" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite" }
+configurate-hocon = { module = "org.spongepowered:configurate-hocon", version.ref = "configurate" }
+configurate-yaml = { module = "org.spongepowered:configurate-yaml", version.ref = "configurate" }
+configurate-extra-kotlin = { module = "org.spongepowered:configurate-extra-kotlin", version.ref = "configurate" }
+reactor-core = { module = "io.projectreactor:reactor-core", version.ref = "reactor" }
+
+# Shaded
+lettuce-core = { module = "io.lettuce:lettuce-core", version.ref = "lettuce" }
+netty-resolver-dns = { module = "io.netty:netty-resolver-dns", version.ref = "netty" }
+invui = { module = "xyz.xenondevs.invui:invui", version.ref = "invui" }
+invui-kotlin = { module = "xyz.xenondevs.invui:invui-kotlin", version.ref = "invui" }
+
+# Provided by Paper
+netty-resolver = { module = "io.netty:netty-resolver", version.ref = "netty" }
+adventure-api = { module = "net.kyori:adventure-api", version.ref = "adventure" }
+adventure-minimessage = { module = "net.kyori:adventure-text-minimessage", version.ref = "adventure" }
+
+# Optional soft dependencies
+lamp-common = { module = "io.github.revxrsal:lamp.common", version.ref = "lamp" }
+lamp-bukkit = { module = "io.github.revxrsal:lamp.bukkit", version.ref = "lamp" }
+packetevents-spigot = { module = "com.github.retrooper:packetevents-spigot", version.ref = "packetevents" }
+worldguard-bukkit = { module = "com.sk89q.worldguard:worldguard-bukkit", version.ref = "worldguard" }
+lands-api = { module = "com.github.angeschossen:LandsAPI", version.ref = "lands" }
+residence = { module = "com.github.Zrips:Residence", version.ref = "residence" }
+griefprevention = { module = "com.github.GriefPrevention:GriefPrevention", version.ref = "griefprevention" }
+
+# Test
+kotest-runner-junit5 = { module = "io.kotest:kotest-runner-junit5-jvm", version.ref = "kotest" }
+kotest-assertions-core = { module = "io.kotest:kotest-assertions-core-jvm", version.ref = "kotest" }
+kotest-property = { module = "io.kotest:kotest-property-jvm", version.ref = "kotest" }
+mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
+
+
+[plugins]
+
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+shadow = { id = "com.gradleup.shadow", version.ref = "shadow" }
+run-paper = { id = "xyz.jpenilla.run-paper", version.ref = "run-paper" }

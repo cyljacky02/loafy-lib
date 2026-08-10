@@ -48,14 +48,24 @@ Add LoafyLib as a compile-only dependency in your `build.gradle.kts`:
 
 ```kotlin
 repositories {
-    mavenLocal() // or your artifact repository
+    maven("https://maven.pkg.github.com/cyljacky02/loafy-lib") {
+        credentials {
+            username = providers.gradleProperty("gpr.user").orNull
+            password = providers.gradleProperty("gpr.token").orNull
+        }
+    }
+    maven("https://repo.papermc.io/repository/maven-public/")
 }
 
 dependencies {
-    compileOnly("me.cyljacky02:loafylib:1.0")
-    compileOnly("io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT")
+    compileOnly("me.cyljacky02:loafy-lib:1.0.0")
+    compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
 }
 ```
+
+Releases are published to GitHub Packages automatically — see
+[Build and release automation](#build-and-release-automation). `mavenLocal()`
+with `./gradlew publishToMavenLocal` also works for local development.
 
 Declare the dependency in your `paper-plugin.yml`:
 
@@ -970,17 +980,26 @@ tasks.shadowJar {
 
 ## Library Loader Dependencies
 
-These are loaded via Paper's library loader (available at runtime):
+These are resolved from Maven at server startup by Paper's library loader, so
+they are available at runtime without being shaded into the jar:
 
-- Kotlin stdlib 2.3.10
-- kotlin-reflect 2.3.10
-- kotlinx-coroutines-core 1.10.2
-- kotlinx-serialization 1.10.0
-- HikariCP 7.0.2
-- MariaDB JDBC 3.5.7
-- SQLite JDBC 3.47.2.0
-- Configurate YAML/HOCON 4.2.0
-- Reactor Core 3.8.1
+- Kotlin stdlib and kotlin-reflect
+- kotlinx-coroutines-core
+- kotlinx-serialization (core + json)
+- HikariCP
+- MariaDB JDBC
+- SQLite JDBC
+- Configurate YAML/HOCON (+ extra-kotlin)
+- Reactor Core
+
+**Versions are intentionally not listed here.** They live in
+[`gradle/libs.versions.toml`](gradle/libs.versions.toml) and are the single
+source of truth: the `paperLibrary` configuration in `build.gradle.kts` both
+compiles against them and generates the manifest that
+`LoafyLibPluginLoader` reads at runtime. Because the compile-time and runtime
+lists are the same generated artifact, they cannot drift apart — which is what
+makes automated dependency updates safe here. See
+[Build and release automation](#build-and-release-automation).
 
 ## Configuration Notes
 
@@ -1240,6 +1259,147 @@ Bit layout (20 bits):
 
 **Why not BlockPos.asLong()?** Paper's `BlockPos.asLong()` packs absolute world coordinates (64 bits). Since block data is stored in chunk PDC (which already identifies the chunk), using absolute coords would be redundant. Chunk-relative packing is ~50% more compact and avoids storing chunk coordinates twice.
 
+
+## Build and Release Automation
+
+Dependency updates, Minecraft version updates and jar publishing are automated.
+The design rests on one rule: **every version in this repository lives in
+[`gradle/libs.versions.toml`](gradle/libs.versions.toml) and nowhere else.**
+
+### Why that rule matters here
+
+LoafyLib declares each runtime dependency twice in effect — once to compile
+against, and once for Paper's library loader to fetch at boot. When those were
+two hand-maintained lists, any bot could update one and not the other. The
+result compiles, passes tests, ships, and then throws `NoSuchMethodError` on a
+live server.
+
+So the loader no longer contains coordinates. The `paperLibrary` configuration
+in `build.gradle.kts` feeds both the compile classpath and the
+`:generatePaperLibraries` task, which writes the manifest that
+`LoafyLibPluginLoader` reads out of the jar. One list, two consumers.
+
+The `paper-api` entry works the same way. It is the full artifact coordinate,
+and `build.gradle.kts` derives everything else from it:
+
+| Derived value | Used by |
+|---|---|
+| Minecraft version | `runServer`, the smoke test |
+| `api-version` | `paper-plugin.yml` (via `processResources`) |
+| compile dependency | `paper-api` |
+
+Both of Paper's artifact schemes are parsed — `1.21.11-R0.1-SNAPSHOT` and the
+calendar-versioned `26.2.build.111-stable`.
+
+### The verification gate
+
+`gradle build` is not a sufficient check for this project. `shadowJar`'s
+`minimize()` strips classes reached only by reflection, relocation mistakes
+surface only on class initialisation, and the library loader resolves from Maven
+at boot. All three produce a green build and a broken server.
+
+So [`.github/scripts/smoke-test.sh`](.github/scripts/smoke-test.sh) boots a real
+Paper server with the shaded jar, waits for startup, stops it, and asserts the
+plugin enabled with no classloading or resolution errors. Nothing merges or
+releases without passing it — not a Renovate PR, not a Minecraft bump, not a
+release build.
+
+Run it yourself after `./gradlew build`:
+
+```bash
+.github/scripts/smoke-test.sh
+```
+
+(Linux/macOS/WSL. On Windows use `./gradlew runServer`.)
+
+### What runs when
+
+| Workflow | Trigger | Does |
+|---|---|---|
+| [`ci.yml`](.github/workflows/ci.yml) | every push and PR | build, test, boot smoke test, upload the jar; on `main`, refresh the rolling `latest` prerelease |
+| [Renovate](.github/renovate.json5) | weekly | PRs for **library** versions |
+| [`minecraft-update.yml`](.github/workflows/minecraft-update.yml) | weekly + manual | PR for the **Minecraft/Paper** version |
+| [`release.yml`](.github/workflows/release.yml) | push to `main` | maintain the release PR; on merge, tag, publish |
+
+Libraries and the platform are split deliberately: they carry different risk and
+need different verification. Renovate is explicitly barred from `paper-api`,
+and from Netty and Adventure — those are compiled against Paper's own copies, so
+bumping them alone yields a build compiled against APIs the server lacks.
+
+### Minecraft updates
+
+The bump job resolves the coordinate from Paper's published `maven-metadata`
+rather than constructing it, and takes a policy:
+
+- **`line`** (default, scheduled) — newest release in the current line, e.g.
+  `1.21.11` → `1.21.12`.
+- **`latest`** (manual only) — newest stable line overall. Crossing a line, such
+  as `1.21` → `26.x`, is a platform migration and must be asked for by hand:
+
+  ```
+  Actions → Minecraft update → Run workflow → policy: latest
+  ```
+
+The job validates the bump *before* opening the PR, because pull requests
+created with `GITHUB_TOKEN` do not trigger workflow runs. A failing upgrade is
+still opened as a PR — for a platform jump, knowing exactly what breaks is the
+point — but it is labelled `validation-failed`.
+
+### Releases
+
+Versions come from the conventional commits this repo already uses.
+`release-please` maintains a release PR with the changelog and the version in
+`gradle.properties`; merging it tags the release and publishes:
+
+- the shaded jar as a **GitHub Release** asset
+- `me.cyljacky02:loafy-lib:<version>` to **GitHub Packages**
+
+Dependent plugins should prefer the published coordinate over a local file:
+
+```kotlin
+repositories {
+    maven("https://maven.pkg.github.com/cyljacky02/loafy-lib") {
+        credentials {
+            username = providers.gradleProperty("gpr.user").orNull
+            password = providers.gradleProperty("gpr.token").orNull
+        }
+    }
+}
+
+dependencies {
+    compileOnly("me.cyljacky02:loafy-lib:1.0.0")
+}
+```
+
+The newest green build of `main` is always downloadable from the `latest`
+prerelease, for testing between releases.
+
+### Setup checklist
+
+One-time steps, since these cannot be enabled from the repository contents
+alone:
+
+1. **Install the Renovate GitHub App** on the repository. Its PRs trigger CI;
+   PRs opened by `GITHUB_TOKEN` do not.
+2. **Settings → Actions → General → Workflow permissions**: allow GitHub Actions
+   to create and approve pull requests (needed by the Minecraft bump job and
+   release-please).
+3. **Create the labels** used by automation: `dependencies`, `shaded`,
+   `minecraft`, `platform-jump`, `platform-patch`, `validation-failed`, `build`.
+4. Optionally add a branch protection rule on `main` requiring the
+   **Build and verify** check.
+
+### Not yet enabled
+
+Gradle [dependency locking](https://docs.gradle.org/current/userguide/dependency_locking.html)
+would put the full resolved graph — including transitive changes no PR title
+mentions — into the diff of every update PR. It is the natural next hardening
+step for a plugin that shades third-party bytecode, and pairs with Renovate's
+`gradleLockfileUpdate`. It is left off for now because it adds a
+`--write-locks` step to every local dependency change.
+
+Until then, the supply-chain control is Renovate's `minimumReleaseAge: 3 days`,
+which keeps a compromised or yanked release from being proposed at all.
 
 ## License
 

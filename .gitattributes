@@ -1,0 +1,16 @@
+# Normalise line endings so a checkout on Windows cannot produce files that
+# break on the Linux CI runners.
+* text=auto
+
+# Shell scripts and the Gradle wrapper MUST stay LF. With CRLF the kernel reads
+# the shebang as `/usr/bin/env bash\r` and the script dies with a "not found"
+# that names an interpreter which plainly exists.
+*.sh text eol=lf
+gradlew text eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary
+*.jar binary
+gradle/wrapper/gradle-wrapper.jar binary

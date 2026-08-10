@@ -1,0 +1,93 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  // Renovate owns the LIBRARY versions in gradle/libs.versions.toml.
+  // It deliberately does NOT own `paper-api` — the Minecraft platform version
+  // is bumped by .github/workflows/minecraft-update.yml, because upstream uses
+  // two different artifact schemes and a bump has to move run-paper, the
+  // paper-plugin.yml api-version and the smoke test together.
+  //
+  // Package matchers use Renovate's regex form (`/.../`) rather than globs so
+  // the intent is unambiguous.
+
+  extends: [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+  ],
+
+  timezone: "Asia/Hong_Kong",
+  schedule: ["before 6am on monday"],
+  prConcurrentLimit: 5,
+  prHourlyLimit: 2,
+  labels: ["dependencies"],
+  commitMessagePrefix: "chore(deps):",
+
+  // LoafyLib shades third-party bytecode straight into the jar that runs on
+  // production servers, so an automated bump is a supply-chain event. Waiting
+  // three days means a compromised or yanked release is usually pulled before
+  // Renovate ever proposes it.
+  minimumReleaseAge: "3 days",
+
+  packageRules: [
+    {
+      description: "Kotlin compiler, stdlib and reflect must move as one. The catalog already shares a version ref; this keeps the Gradle plugin bump in the same PR.",
+      groupName: "kotlin",
+      matchPackageNames: ["/^org\\.jetbrains\\.kotlin(:|\\.jvm$)/"],
+    },
+    {
+      description: "kotlinx coroutines and serialization each ship as matched module sets.",
+      groupName: "kotlinx",
+      matchPackageNames: ["/^org\\.jetbrains\\.kotlinx:/"],
+    },
+    {
+      description: "Configurate modules are only tested against each other.",
+      groupName: "configurate",
+      matchPackageNames: ["/^org\\.spongepowered:configurate/"],
+    },
+    {
+      description: "Netty and Adventure are dictated by whatever Paper ships. They are compileOnly against the server's own copies, so bumping them independently yields a build that compiles against APIs the runtime does not have. They move only when paper-api moves.",
+      matchPackageNames: ["/^io\\.netty:/", "/^net\\.kyori:/"],
+      enabled: false,
+    },
+    {
+      description: "paper-api is owned by the Minecraft bump workflow.",
+      matchPackageNames: ["io.papermc.paper:paper-api"],
+      enabled: false,
+    },
+    {
+      description: "InvUI and Lamp are intentionally tracked on prereleases (2.0.0-beta / 4.0.0-rc).",
+      matchPackageNames: ["/^xyz\\.xenondevs\\.invui:/", "/^io\\.github\\.revxrsal:/"],
+      ignoreUnstable: false,
+    },
+    {
+      description: "Shaded dependencies interact with minimize() and relocation, which only the boot smoke test can validate. Always a human review, even for patches.",
+      matchPackageNames: ["/^io\\.lettuce:/", "/^xyz\\.xenondevs\\.invui:/"],
+      addLabels: ["shaded"],
+      automerge: false,
+    },
+    {
+      description: "Test-only patch updates carry no runtime risk and are gated by the same CI run. Matched by coordinate because catalog entries do not carry a Gradle depType.",
+      matchPackageNames: ["/^io\\.kotest:/", "/^io\\.mockk:/"],
+      matchUpdateTypes: ["patch"],
+      automerge: true,
+      automergeType: "branch",
+    },
+    {
+      description: "Optional soft dependencies are compile-time only; batch them to cut PR noise.",
+      groupName: "soft dependencies",
+      matchPackageNames: [
+        "/^com\\.github\\.retrooper:/",
+        "/^com\\.sk89q\\.worldguard:/",
+        "/^com\\.github\\.angeschossen:/",
+        "/^com\\.github\\.Zrips:/",
+        "/^com\\.github\\.GriefPrevention:/",
+      ],
+    },
+    {
+      description: "Gradle wrapper bumps change build semantics, not just a version.",
+      matchManagers: ["gradle-wrapper"],
+      addLabels: ["build"],
+    },
+  ],
+}
