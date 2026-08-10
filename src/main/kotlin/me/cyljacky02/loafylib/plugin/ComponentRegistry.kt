@@ -11,6 +11,14 @@ import kotlin.reflect.KClass
  * - Circular dependency detection at registration time
  * - Graceful failure handling (shutdown already-initialized components on failure)
  *
+ * ## Thread Safety
+ *
+ * This registry is designed for single-threaded access during Bukkit plugin lifecycle:
+ * - Registration, initialization, and shutdown occur on the main thread in `onEnable`/`onDisable`
+ * - Component retrieval via [get] is safe after initialization completes
+ *
+ * Do NOT register or initialize components from coroutines or async threads.
+ *
  * ## Usage Example
  *
  * ```kotlin
@@ -106,7 +114,11 @@ class ComponentRegistry {
                 initializedComponents.add(type)
             } catch (e: Exception) {
                 // Shutdown already-initialized components in reverse order
-                shutdownInitialized()
+                try {
+                    shutdownInitialized()
+                } catch (shutdownError: Exception) {
+                    e.addSuppressed(shutdownError)
+                }
                 throw e
             }
         }
@@ -118,7 +130,9 @@ class ComponentRegistry {
      * Components are shutdown in reverse initialization order, ensuring that
      * dependents are shutdown before their dependencies.
      *
-     * Shutdown errors are logged but do not prevent other components from shutting down.
+     * Shutdown errors do not prevent other components from shutting down.
+     * If any shutdown errors occur, they are collected and thrown after all
+     * components have been given a chance to shutdown.
      */
     suspend fun shutdownAll() {
         shutdownInitialized()
@@ -128,15 +142,23 @@ class ComponentRegistry {
      * Shuts down all components that were successfully initialized, in reverse order.
      */
     private suspend fun shutdownInitialized() {
+        var firstError: Exception? = null
         for (type in initializedComponents.reversed()) {
             try {
                 components[type]?.shutdown()
             } catch (e: Exception) {
-                // Log but continue shutting down other components
-                // The calling code (LoafyPlugin) will handle logging
+                if (firstError == null) {
+                    firstError = e
+                } else {
+                    firstError.addSuppressed(e)
+                }
             }
         }
         initializedComponents.clear()
+
+        if (firstError != null) {
+            throw firstError
+        }
     }
 
 
@@ -163,14 +185,18 @@ class ComponentRegistry {
         // Build the dependency graph
         for ((type, component) in components) {
             for (depType in component.dependencies()) {
-                // Validate that dependency is registered
-                if (depType !in components) {
+                // Find a registered component that satisfies the dependency
+                // (exact match or implements/extends the dependency type)
+                val resolvedDep = components.keys.find { registeredType ->
+                    depType.java.isAssignableFrom(registeredType.java)
+                }
+                if (resolvedDep == null) {
                     throw IllegalStateException(
                         "Component ${type.simpleName} depends on ${depType.simpleName} which is not registered"
                     )
                 }
-                // depType -> type (dependency must be initialized before dependent)
-                dependents[depType]!!.add(type)
+                // resolvedDep -> type (dependency must be initialized before dependent)
+                dependents[resolvedDep]!!.add(type)
                 inDegree[type] = inDegree[type]!! + 1
             }
         }

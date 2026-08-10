@@ -4,6 +4,7 @@ import me.cyljacky02.loafylib.blockdata.BlockDataService
 import me.cyljacky02.loafylib.blockdata.BlockDataServiceImpl
 import me.cyljacky02.loafylib.glow.GlowingService
 import me.cyljacky02.loafylib.glow.GlowingServiceFactory
+import me.cyljacky02.loafylib.permission.PermissionAccess
 import me.cyljacky02.loafylib.plugin.LoafyPlugin
 import me.cyljacky02.loafylib.plugin.PluginComponent
 
@@ -60,13 +61,17 @@ class LoafyLibPlugin : LoafyPlugin() {
     }
 
     override fun onPluginEnable() {
+        // Detect thread-safe permission provider (LuckPerms) — must run before consumer plugins
+        PermissionAccess.detect()
+
         // Register services with interface types for retrieval
         // The concrete types are already registered by LoafyPlugin.onEnable()
         registry.register(GlowingService::class, glowingService)
         registry.register(BlockDataService::class, blockDataService)
         
         val glowStatus = if (glowingService.isAvailable()) "enabled" else "disabled (PacketEvents not found)"
-        logger.info("LoafyLib infrastructure ready - Glowing: $glowStatus, BlockData: enabled")
+        val permStatus = if (PermissionAccess.isAvailable) "thread-safe (LuckPerms)" else "entity-thread only"
+        logger.info("LoafyLib infrastructure ready - Glowing: $glowStatus, BlockData: enabled, Permissions: $permStatus")
     }
 
     override fun onPluginDisable() {

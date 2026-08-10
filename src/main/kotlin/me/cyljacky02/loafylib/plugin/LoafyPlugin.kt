@@ -2,6 +2,7 @@ package me.cyljacky02.loafylib.plugin
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
+import me.cyljacky02.loafylib.event.SuspendingEventService
 import me.cyljacky02.loafylib.scheduler.cancelGracefully
 import me.cyljacky02.loafylib.scheduler.createPluginScope
 import org.bukkit.event.HandlerList
@@ -51,6 +52,7 @@ import kotlin.reflect.KClass
  *
  * Components that implement [org.bukkit.event.Listener] are automatically registered
  * as Bukkit event listeners after initialization and unregistered on shutdown.
+ * Both regular and suspending event handlers are supported.
  * No annotation needed - just implement the interface:
  *
  * ```kotlin
@@ -85,7 +87,7 @@ abstract class LoafyPlugin : JavaPlugin() {
     /**
      * Plugin-scoped coroutine scope for async operations.
      *
-     * Uses [kotlinx.coroutines.Dispatchers.IO] via [createPluginScope].
+     * Uses Paper's AsyncScheduler via [createPluginScope].
      * Automatically cancelled when the plugin is disabled.
      *
      * ```kotlin
@@ -95,7 +97,7 @@ abstract class LoafyPlugin : JavaPlugin() {
      * }
      * ```
      */
-    val pluginScope: CoroutineScope by lazy { createPluginScope() }
+    val pluginScope: CoroutineScope by lazy { this.createPluginScope() }
 
     /**
      * Component registry for managing plugin services.
@@ -202,8 +204,22 @@ abstract class LoafyPlugin : JavaPlugin() {
             logger.warning("Error during plugin disable: ${e.message}")
         }
 
-        // Unregister all component listeners
+        // Unregister all component listeners first — no new events after this
         unregisterComponentListeners()
+
+        // Cancel all coroutines BEFORE component shutdown.
+        //
+        // Paper sets isEnabled = false before calling onDisable(), so the
+        // AsyncDispatcher already falls back to Dispatchers.IO for any
+        // in-flight continuations. Cancelling the scope here ensures
+        // pluginScope coroutines (e.g., StorageService writer job) receive
+        // CancellationException promptly, allowing component shutdown()
+        // methods that call join() to return without hanging.
+        //
+        // Component shutdown can still perform blocking I/O (e.g.,
+        // drainRemaining) via blockingIoDispatcher which is backed by
+        // Dispatchers.IO.limitedParallelism — independent of pluginScope.
+        pluginScope.cancelGracefully()
 
         try {
             // Shutdown components in reverse dependency order
@@ -211,9 +227,6 @@ abstract class LoafyPlugin : JavaPlugin() {
         } catch (e: Exception) {
             logger.warning("Error during component shutdown: ${e.message}")
         }
-
-        // Cancel all coroutines gracefully
-        pluginScope.cancelGracefully()
 
         logger.info("${pluginMeta.name} disabled")
     }
@@ -227,7 +240,7 @@ abstract class LoafyPlugin : JavaPlugin() {
     private fun registerComponentListeners() {
         for (component in registry.components.values) {
             if (component is Listener) {
-                server.pluginManager.registerEvents(component, this)
+                SuspendingEventService.register(component, this, pluginScope)
             }
         }
     }
