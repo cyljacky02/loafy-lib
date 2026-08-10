@@ -1,11 +1,36 @@
 plugins {
-    kotlin("jvm") version "2.3.10"
-    id("com.gradleup.shadow") version "9.3.1"
-    id("xyz.jpenilla.run-paper") version "2.3.1"
+    alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.shadow)
+    alias(libs.plugins.run.paper)
+    `maven-publish`
 }
 
 group = "me.cyljacky02"
-version = "1.0-SNAPSHOT"
+// version comes from gradle.properties so release-please can bump it.
+
+// =============================================================================
+// Platform version derivation
+//
+// The catalog holds the FULL paper-api artifact version. Upstream uses two
+// different schemes, so we parse rather than construct:
+//   "1.21.11-R0.1-SNAPSHOT"  -> minecraft 1.21.11, api-version 1.21
+//   "26.2.build.111-stable"  -> minecraft 26.2,    api-version 26.2
+// Everything that needs a Minecraft version reads it from here, so a bump to
+// the catalog propagates to run-paper, paper-plugin.yml and CI at once.
+// =============================================================================
+val paperApiVersion: String = libs.versions.paper.api.get()
+
+val minecraftVersion: String =
+    Regex("""^(.+?)-R\d+\.\d+-SNAPSHOT$""").find(paperApiVersion)?.groupValues?.get(1)
+        ?: Regex("""^(.+?)\.build\.\d+-[A-Za-z]+$""").find(paperApiVersion)?.groupValues?.get(1)
+        ?: error(
+            "Unrecognised paper-api version scheme: '$paperApiVersion'. " +
+                "Expected '<mc>-R0.1-SNAPSHOT' or '<mc>.build.<n>-<channel>'.",
+        )
+
+/** The `api-version` declared in paper-plugin.yml — the Minecraft release line. */
+val pluginApiVersion: String =
+    minecraftVersion.substringBefore('-').split('.').take(2).joinToString(".")
 
 repositories {
     mavenCentral()
@@ -17,27 +42,67 @@ repositories {
     maven("https://jitpack.io") // LandsAPI
 }
 
+// =============================================================================
+// Paper library loader
+//
+// Dependencies in the `paperLibrary` configuration are downloaded at runtime by
+// Paper's MavenLibraryResolver (see LoafyLibPluginLoader.java). They are NOT
+// shaded into the jar.
+//
+// The coordinates are written into the jar by :generatePaperLibraries and read
+// back by the loader, so the version we compile against and the version the
+// server fetches are the same string by construction. Never hardcode these
+// coordinates in Java again — a bot updating the catalog cannot edit string
+// literals, and the resulting compile/runtime skew only fails on a live server.
+// =============================================================================
+/**
+ * Renders a catalog entry as `group:name:version`.
+ *
+ * Used for the generated manifest, and for the two dependencies that need an
+ * `exclude` block: passing a catalog `Provider` together with a configuration
+ * closure silently discards the exclusions (the trailing lambda binds to an
+ * overload that never applies it), which quietly re-added every Netty module to
+ * the shaded jar. String notation takes the documented
+ * `Action<ExternalModuleDependency>` overload, so the excludes actually apply.
+ */
+fun Provider<MinimalExternalModuleDependency>.coordinate(): String =
+    get().let { "${it.module.group}:${it.module.name}:${it.versionConstraint.requiredVersion}" }
+
+val paperLibrary: Configuration by configurations.creating
+
+/** Runtime libraries, in the order they appear in the generated manifest. */
+val paperLibraries = listOf(
+    // Kotlin stdlib must match the compiler version — the catalog shares one ref.
+    libs.kotlin.stdlib,
+    // kotlin-reflect is required by configurate-extra-kotlin to instantiate
+    // Kotlin data classes using default constructor arguments.
+    libs.kotlin.reflect,
+    libs.kotlinx.coroutines.core,
+    // Kotlinx Serialization — Redis sync payloads and general serialization.
+    libs.kotlinx.serialization.core,
+    libs.kotlinx.serialization.json,
+    libs.hikaricp,
+    libs.mariadb.client,
+    // SQLite JDBC driver for local file-based databases.
+    libs.sqlite.jdbc,
+    libs.configurate.hocon,
+    libs.configurate.yaml,
+    libs.configurate.extra.kotlin,
+    // Reactor Core is required by Lettuce for reactive streams and is not
+    // provided by Paper. Lettuce itself is shaded, not loaded here.
+    libs.reactor.core,
+)
+
 dependencies {
     // Paper API (provides Adventure, SLF4J, Netty)
-    compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+    compileOnly(libs.paper.api)
 
-    // === Libraries loaded by Paper's Library Loader (declared in paper-plugin.yml) ===
-    compileOnly("org.jetbrains.kotlin:kotlin-stdlib:2.3.10")
-    compileOnly("org.jetbrains.kotlin:kotlin-reflect:2.3.10")
-    compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-core:1.10.0")
-    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
-    compileOnly("com.zaxxer:HikariCP:7.0.2")
-    compileOnly("org.mariadb.jdbc:mariadb-java-client:3.5.7")
-    compileOnly("org.spongepowered:configurate-hocon:4.2.0")
-    compileOnly("org.spongepowered:configurate-yaml:4.2.0")
-    compileOnly("org.spongepowered:configurate-extra-kotlin:4.2.0")
-    
-    // Reactor - required by Lettuce (loaded via library loader, not shaded)
-    compileOnly("io.projectreactor:reactor-core:3.8.1")
+    // Runtime libraries: compiled against, resolved by Paper at runtime.
+    paperLibraries.forEach { paperLibrary(it) }
 
-    // Netty - provided by Paper at runtime, needed for compile-time access to DefaultAddressResolverGroup
-    compileOnly("io.netty:netty-resolver:4.1.118.Final")
+    // Netty — provided by Paper at runtime, needed for compile-time access to
+    // DefaultAddressResolverGroup.
+    compileOnly(libs.netty.resolver)
 
     // === Shaded Redis client ===
     // Lettuce is shaded and relocated. Most Netty modules are NOT relocated because:
@@ -50,7 +115,7 @@ dependencies {
     // Without netty-resolver-dns, class loading fails with NoClassDefFoundError: DnsCnameCache.
     //
     // We relocate netty-resolver-dns to avoid conflicts with Paper's Netty (which doesn't include it).
-    implementation("io.lettuce:lettuce-core:7.2.1.RELEASE") {
+    implementation(libs.lettuce.core.coordinate()) {
         exclude(group = "io.projectreactor")
         exclude(group = "org.reactivestreams")
         // Exclude all netty EXCEPT netty-resolver-dns which is required for Lettuce class loading
@@ -62,69 +127,104 @@ dependencies {
         exclude(group = "io.netty", module = "netty-resolver")
         exclude(group = "io.netty", module = "netty-transport-native-unix-common")
     }
-    
+
     // netty-resolver-dns is required for Lettuce's static initializer (DefaultClientResources)
     // We shade and relocate it to avoid conflicts with Paper's Netty
-    implementation("io.netty:netty-resolver-dns:4.1.118.Final")
+    implementation(libs.netty.resolver.dns)
 
     // === Shaded dependencies (not on Maven Central or need relocation) ===
     // GUI - InvUI v2 (shaded but NOT relocated)
     // - Cannot use Paper library loader: InvUI v2 uses paperweight-userdev with NMS code
     // - Cannot relocate: Uses io.netty.channel.ChannelDuplexHandler for packet interception
     // - Shared library pattern: All Loafy plugins use LoafyLib's InvUI instance
-    implementation("xyz.xenondevs.invui:invui:2.0.0-beta.1")
-    implementation("xyz.xenondevs.invui:invui-kotlin:2.0.0-beta.1")
-    
+    implementation(libs.invui)
+    implementation(libs.invui.kotlin)
+
     // Commands - Lamp (NOT shaded - each dependent plugin should shade their own copy)
     // Lamp's BukkitLamp.builder(plugin) binds commands to a specific plugin instance,
     // making shared library usage problematic. Each plugin needs its own relocated copy.
     // Kept as compileOnly for API reference only.
-    compileOnly("io.github.revxrsal:lamp.common:4.0.0-rc.14")
-    compileOnly("io.github.revxrsal:lamp.bukkit:4.0.0-rc.14")
+    compileOnly(libs.lamp.common)
+    compileOnly(libs.lamp.bukkit)
 
     // Adventure/MiniMessage (provided by Paper)
-    compileOnly("net.kyori:adventure-api:4.25.0")
-    compileOnly("net.kyori:adventure-text-minimessage:4.25.0")
+    compileOnly(libs.adventure.api)
+    compileOnly(libs.adventure.minimessage)
 
     // PacketEvents - optional soft dependency for glowing entity support
-    compileOnly("com.github.retrooper:packetevents-spigot:2.11.1")
+    compileOnly(libs.packetevents.spigot)
 
     // WorldGuard - optional soft dependency for protection checking
-    compileOnly("com.sk89q.worldguard:worldguard-bukkit:7.0.13")
+    compileOnly(libs.worldguard.bukkit)
 
     // Lands - optional soft dependency for protection checking
-    compileOnly("com.github.angeschossen:LandsAPI:7.23.1")
+    compileOnly(libs.lands.api)
 
     // Residence - optional soft dependency for protection checking
-    compileOnly("com.github.Zrips:Residence:6.0.0.1") {
+    compileOnly(libs.residence.coordinate()) {
         exclude(group = "org.dynmap", module = "dynmap-api")
     }
 
     // GriefPrevention - optional soft dependency for protection checking
-    compileOnly("com.github.GriefPrevention:GriefPrevention:18.0.0")
+    compileOnly(libs.griefprevention)
 
     // Testing - Kotest
-    testImplementation("io.kotest:kotest-runner-junit5-jvm:6.0.7")
-    testImplementation("io.kotest:kotest-assertions-core-jvm:6.0.7")
-    testImplementation("io.kotest:kotest-property-jvm:6.0.7")
-    testImplementation("io.mockk:mockk:1.14.2")
+    testImplementation(libs.kotest.runner.junit5)
+    testImplementation(libs.kotest.assertions.core)
+    testImplementation(libs.kotest.property)
+    testImplementation(libs.mockk)
+    testImplementation(libs.kotlinx.coroutines.test)
 
-    // Adventure API for tests (needed since Paper API is compileOnly)
-    testImplementation("net.kyori:adventure-api:4.25.0")
-    testImplementation("net.kyori:adventure-text-minimessage:4.25.0")
+    // Paper API and Adventure for tests (compileOnly for main, so not inherited)
+    testImplementation(libs.paper.api)
+    testImplementation(libs.adventure.api)
+    testImplementation(libs.adventure.minimessage)
+    testImplementation(libs.packetevents.spigot)
+}
 
-    // Paper API for tests (needed for Plugin interface, etc.)
-    testImplementation("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
-    testImplementation("com.github.retrooper:packetevents-spigot:2.11.1")
+// Runtime libraries are compiled and tested against the exact versions the
+// server will fetch.
+configurations.compileOnly.get().extendsFrom(paperLibrary)
+configurations.testImplementation.get().extendsFrom(paperLibrary)
 
-    // Library loader deps for tests (since they're compileOnly for main)
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
-    testImplementation("com.zaxxer:HikariCP:7.0.2")
-    testImplementation("org.mariadb.jdbc:mariadb-java-client:3.5.7")
-    testImplementation("org.spongepowered:configurate-hocon:4.2.0")
-    testImplementation("org.spongepowered:configurate-yaml:4.2.0")
-    testImplementation("org.spongepowered:configurate-extra-kotlin:4.2.0")
+// =============================================================================
+// Generated library-loader manifest
+// =============================================================================
+
+/** Writes the `paperLibrary` coordinates into a resource the plugin loader reads. */
+abstract class GeneratePaperLibraries : DefaultTask() {
+    @get:Input
+    abstract val coordinates: ListProperty<String>
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val target = outputDirectory.get().file(RESOURCE_PATH).asFile
+        target.parentFile.mkdirs()
+        target.writeText(
+            buildString {
+                appendLine("# Generated by :generatePaperLibraries - do not edit.")
+                appendLine("# Source of truth: gradle/libs.versions.toml")
+                coordinates.get().forEach { appendLine(it) }
+            },
+        )
+    }
+
+    companion object {
+        const val RESOURCE_PATH = "me/cyljacky02/loafylib/libraries.txt"
+    }
+}
+
+val generatePaperLibraries by tasks.registering(GeneratePaperLibraries::class) {
+    description = "Writes the Paper library-loader manifest from the version catalog."
+    coordinates.set(paperLibraries.map { it.coordinate() })
+    outputDirectory.set(layout.buildDirectory.dir("generated/paper-libraries"))
+}
+
+sourceSets.main {
+    resources.srcDir(generatePaperLibraries.flatMap { it.outputDirectory })
 }
 
 kotlin {
@@ -142,14 +242,19 @@ tasks.test {
 
 tasks.processResources {
     filteringCharset = "UTF-8"
+    val placeholders = mapOf(
+        "version" to project.version.toString(),
+        "apiVersion" to pluginApiVersion,
+    )
+    inputs.properties(placeholders)
     filesMatching("paper-plugin.yml") {
-        expand("version" to project.version)
+        expand(placeholders)
     }
 }
 
 tasks.shadowJar {
     archiveClassifier.set("")
-    
+
     // Minimize JAR - only include classes actually used
     minimize {
         // Don't minimize Lettuce - it uses reflection and service loading
@@ -164,7 +269,7 @@ tasks.shadowJar {
     // Lettuce relocated (most Netty excluded - uses Paper's native Netty)
     relocate("io.lettuce", "me.cyljacky02.loafylib.libs.lettuce")
     relocate("redis.clients", "me.cyljacky02.loafylib.libs.redis.clients")
-    
+
     // Relocate netty-resolver-dns to avoid conflicts with Paper's Netty
     // This is required because Lettuce's DefaultClientResources static initializer
     // references DnsAddressResolverGroup and DefaultDnsCnameCache
@@ -176,10 +281,10 @@ tasks.shadowJar {
     // Relocating would update io.netty references, breaking the pipeline injection.
     // relocate("xyz.xenondevs.invui", "me.cyljacky02.loafylib.libs.invui")
     // relocate("xyz.xenondevs.inventoryaccess", "me.cyljacky02.loafylib.libs.inventoryaccess")
-    
+
     // NOTE: Lamp is NOT shaded in LoafyLib - each dependent plugin should shade their own copy
     // because BukkitLamp.builder(plugin) binds commands to a specific plugin instance.
-    
+
     // Exclude Paper-provided classes
     exclude("net/kyori/**")
     exclude("org/slf4j/**")
@@ -187,7 +292,7 @@ tasks.shadowJar {
     exclude("org/jetbrains/**")
     exclude("org/jspecify/**")
     exclude("org/intellij/**")
-    
+
     // Exclude unnecessary files
     exclude("META-INF/maven/**")
     exclude("META-INF/proguard/**")
@@ -200,7 +305,7 @@ tasks.shadowJar {
     exclude("**/module-info.class")
     exclude("META-INF/native-image/**")
     exclude("META-INF/io.netty.versions.properties")
-    
+
     // Exclude InvUI colors.bin (large file, not needed for basic usage)
     exclude("colors.bin")
 }
@@ -210,5 +315,48 @@ tasks.build {
 }
 
 tasks.runServer {
-    minecraftVersion("1.21.11")
+    minecraftVersion(minecraftVersion)
+}
+
+// =============================================================================
+// Publishing — consumed by the sibling Loafy plugins via GitHub Packages.
+// =============================================================================
+publishing {
+    publications {
+        create<MavenPublication>("shadow") {
+            artifactId = "loafy-lib"
+            artifact(tasks.shadowJar)
+        }
+    }
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/cyljacky02/loafy-lib")
+            credentials {
+                username = providers.environmentVariable("GITHUB_ACTOR").orNull
+                password = providers.environmentVariable("GITHUB_TOKEN").orNull
+            }
+        }
+    }
+}
+
+// =============================================================================
+// CI helpers — let workflows read the resolved versions without parsing TOML.
+// =============================================================================
+tasks.register("printMinecraftVersion") {
+    description = "Prints the Minecraft version derived from the paper-api coordinate."
+    val value = minecraftVersion
+    doLast { println(value) }
+}
+
+tasks.register("printPaperApiVersion") {
+    description = "Prints the full paper-api artifact version."
+    val value = paperApiVersion
+    doLast { println(value) }
+}
+
+tasks.register("printProjectVersion") {
+    description = "Prints the plugin version."
+    val value = project.version.toString()
+    doLast { println(value) }
 }

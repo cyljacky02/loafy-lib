@@ -1,0 +1,109 @@
+name: Release
+
+# Versioning is derived from the conventional commits this repository already
+# uses (`feat:`, `fix:`, `docs:`, ...).
+#
+# release-please keeps an open pull request containing the next version and the
+# generated changelog. Merging that pull request tags the release; the tag then
+# builds the shaded jar and publishes it twice:
+#
+#   * as a GitHub Release asset — for dropping into a server's plugins/ folder
+#   * to GitHub Packages — so the sibling Loafy plugins can depend on a
+#     versioned coordinate instead of a local file path
+#
+# The jar is built fresh from the tag rather than reused from a CI artifact, so
+# what is published is reproducible from the tagged source alone.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    name: Maintain the release pull request
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      released: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    name: Build and publish the jar
+    needs: release-please
+    if: needs.release-please.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      - name: Build
+        run: ./gradlew build --console=plain
+
+      - name: Cache Paper server jars
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/paper
+          key: paper-release-${{ needs.release-please.outputs.version }}
+          restore-keys: paper-
+
+      # The same gate as CI. A release is the last place to discover that
+      # minimize() stripped a reflectively-loaded class.
+      - name: Boot smoke test
+        run: .github/scripts/smoke-test.sh
+
+      - name: Attach the jar to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ needs.release-please.outputs.tag }}" \
+            build/libs/*.jar --clobber
+
+      - name: Publish to GitHub Packages
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew publishShadowPublicationToGitHubPackagesRepository --console=plain
+
+      - name: Summary
+        run: |
+          {
+            echo "### Released ${{ needs.release-please.outputs.tag }}"
+            echo ""
+            echo "- GitHub Release asset attached"
+            echo "- Published to GitHub Packages as \`me.cyljacky02:loafy-lib:${{ needs.release-please.outputs.version }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

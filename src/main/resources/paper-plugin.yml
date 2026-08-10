@@ -2,7 +2,7 @@ name: LoafyLib
 version: '${version}'
 main: me.cyljacky02.loafylib.LoafyLibPlugin
 loader: me.cyljacky02.loafylib.LoafyLibPluginLoader
-api-version: '1.21'
+api-version: '${apiVersion}'
 description: Shared library plugin providing common infrastructure for Loafy plugins
 author: cyljacky02
 website: ''
