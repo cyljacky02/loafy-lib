@@ -170,8 +170,10 @@ internal class PacketEventsGlowingService(
     ): Int {
         if (!receiver.isOnline) return 0
 
-        // Generate unique entity ID using Paper's nextEntityId() API
-        val entityId = Bukkit.getUnsafe().nextEntityId()
+        // Generate unique entity ID using Paper's nextEntityId() API.
+        // Paper 26.x scopes the counter per world, so the receiver's world is
+        // the correct one: these are virtual entities shown only to them.
+        val entityId = Bukkit.getUnsafe().nextEntityId(receiver.world)
         val entityUuid = UUID.randomUUID()
         val receiverUuid = receiver.uniqueId
 
@@ -198,8 +200,10 @@ internal class PacketEventsGlowingService(
     ): Int {
         if (!receiver.isOnline) return 0
 
-        // Generate unique entity ID using Paper's nextEntityId() API
-        val entityId = Bukkit.getUnsafe().nextEntityId()
+        // Generate unique entity ID using Paper's nextEntityId() API.
+        // Paper 26.x scopes the counter per world, so the receiver's world is
+        // the correct one: these are virtual entities shown only to them.
+        val entityId = Bukkit.getUnsafe().nextEntityId(receiver.world)
         val entityUuid = UUID.randomUUID()
         val receiverUuid = receiver.uniqueId
 
@@ -226,8 +230,10 @@ internal class PacketEventsGlowingService(
     ): Int {
         if (!receiver.isOnline) return 0
 
-        // Generate unique entity ID using Paper's nextEntityId() API
-        val entityId = Bukkit.getUnsafe().nextEntityId()
+        // Generate unique entity ID using Paper's nextEntityId() API.
+        // Paper 26.x scopes the counter per world, so the receiver's world is
+        // the correct one: these are virtual entities shown only to them.
+        val entityId = Bukkit.getUnsafe().nextEntityId(receiver.world)
         val entityUuid = UUID.randomUUID()
         val receiverUuid = receiver.uniqueId
 
@@ -350,8 +356,10 @@ internal class PacketEventsGlowingService(
     ): Int {
         if (!receiver.isOnline) return 0
 
-        // Generate unique entity ID using Paper's nextEntityId() API
-        val entityId = Bukkit.getUnsafe().nextEntityId()
+        // Generate unique entity ID using Paper's nextEntityId() API.
+        // Paper 26.x scopes the counter per world, so the receiver's world is
+        // the correct one: these are virtual entities shown only to them.
+        val entityId = Bukkit.getUnsafe().nextEntityId(receiver.world)
         val entityUuid = UUID.randomUUID()
         val receiverUuid = receiver.uniqueId
 

@@ -44,7 +44,7 @@ class CameraEntity(
 
     // Use Paper's safe entity ID allocation to avoid conflicts with server entities
     // This increments the server's internal ENTITY_COUNTER, guaranteeing uniqueness
-    private val entityId: Int = org.bukkit.Bukkit.getUnsafe().nextEntityId()
+    private val entityId: Int = org.bukkit.Bukkit.getUnsafe().nextEntityId(player.world)
     private val entityUuid: UUID = UUID.randomUUID()
     private var spawned: Boolean = false
     private var currentLocation: Location? = null
