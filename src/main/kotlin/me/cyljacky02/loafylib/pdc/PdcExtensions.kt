@@ -14,6 +14,9 @@ import org.bukkit.persistence.PersistentDataType
 /**
  * Gets a value from the PersistentDataContainer, or null if not present.
  *
+ * Note: This delegates directly to [get] which already returns null if not present.
+ * Kept for semantic clarity and consistency with the extension API.
+ *
  * ```kotlin
  * val value: String? = pdc.getOrNull(key, PersistentDataType.STRING)
  * ```
@@ -21,7 +24,7 @@ import org.bukkit.persistence.PersistentDataType
 fun <P : Any, C : Any> PersistentDataContainer.getOrNull(
     key: NamespacedKey,
     type: PersistentDataType<P, C>
-): C? = if (has(key, type)) get(key, type) else null
+): C? = get(key, type)
 
 // ============================================================================
 // Type-Safe Getters

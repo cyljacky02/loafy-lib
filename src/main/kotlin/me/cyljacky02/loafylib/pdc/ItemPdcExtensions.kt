@@ -12,6 +12,14 @@ import org.bukkit.plugin.Plugin
 // ============================================================================
 // Efficient PDC access for items using Paper's optimized editPersistentDataContainer.
 // Includes a lightweight marker system for item identification.
+//
+// ## Thread Safety
+// ItemStack PDC access requires:
+// - Paper: Main server thread (or entity's thread for inventory items)
+// - Folia: The region thread that owns the item's context
+//
+// Note: ItemStack itself is NOT thread-safe. Operations on inventory items
+// should be done on the player's entity thread.
 // ============================================================================
 
 /** Marker value for item identification - uses minimal storage (1 byte) */

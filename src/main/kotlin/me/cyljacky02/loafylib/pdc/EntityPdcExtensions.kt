@@ -11,6 +11,13 @@ import org.bukkit.plugin.Plugin
 // ============================================================================
 // PDC access for entities with a lightweight marker system for identification.
 // Same pattern as ItemStack but for Entity lifecycle.
+//
+// ## Thread Safety
+// All functions in this file access entity PDC which requires:
+// - Paper: Main server thread
+// - Folia: The region thread that owns the entity
+//
+// Use Entity.withEntityContext(plugin) or entityDispatcher for safe access.
 // ============================================================================
 
 /** Marker value for entity identification - uses minimal storage (1 byte) */
