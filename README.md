@@ -9,7 +9,7 @@ A shared library plugin for Paper/Folia servers providing common infrastructure 
 class MyPlugin : LoafyPlugin() {
     override fun components() = listOf(
         LettuceRedisManager(config.redis, logger),
-        HikariDatabaseManager(config.database, logger)
+        config.database.createManager(logger, dataFolder = dataFolder)
     )
     
     override fun onPluginEnable() {
@@ -28,12 +28,13 @@ pluginScope.launch {
 
 - **Folia-Compatible Coroutine Dispatchers** - Paper scheduler integration for async, main, entity, and region threads
 - **Redis Management** - Lettuce-based async Redis with pub/sub, pipelining, and Lua scripts
-- **Database Management** - HikariCP connection pooling with retry logic for MariaDB
+- **Database Management** - HikariCP connection pooling with retry logic for MariaDB and SQLite
 - **Configuration Utilities** - Configurate YAML helpers with type-safe serialization
 - **Component Lifecycle** - Dependency-ordered initialization and shutdown with automatic listener registration
 - **Suspend Event Handlers** - Use suspend functions in `@EventHandler` methods
 - **Per-Player Glowing Entities** - PacketEvents-based glowing with team colors (16), RGB Display entities (unlimited), or invisible Shulker markers (pure glow outline)
 - **Per-Block Persistent Data** - Store custom data on individual blocks using chunk PDC storage
+- **Protection Hook** - Unified API for checking build permissions with WorldGuard and Lands integration
 - **Utility Extensions** - Kotlin-idiomatic helpers for ItemStack, Components, and MiniMessage
 - **PDC Extensions** - Unified marker system for Items, Entities, and Chunks with type-safe helpers
 - **Safe Location Utilities** - Folia-compatible safe teleport location detection with hazard checking and nearby search
@@ -82,7 +83,7 @@ class MyPlugin : LoafyPlugin() {
     override fun components(): List<PluginComponent> {
         val config = loadConfig()
         val redisManager = LettuceRedisManager(config.redis, logger)
-        val databaseManager = HikariDatabaseManager(config.database, logger)
+        val databaseManager = config.database.createManager(logger, dataFolder = dataFolder)
         val myService = MyServiceImpl(databaseManager, redisManager)
         
         return listOf(redisManager, databaseManager, myService)
@@ -734,6 +735,62 @@ if (glowingService.isAvailable()) {
 **Note:** GlowingService requires [PacketEvents](https://github.com/retrooper/packetevents) as an optional soft dependency. When PacketEvents is not installed, `isAvailable()` returns false and all methods become no-ops (graceful degradation).
 
 
+### Protection Hook
+
+Unified API for checking build/break permissions with WorldGuard and Lands integration:
+
+```kotlin
+import me.cyljacky02.loafylib.protection.*
+
+class MyPlugin : LoafyPlugin() {
+    lateinit var protection: ProtectionHook
+        private set
+
+    override fun onPluginEnable() {
+        // Create hook - automatically detects available protection plugins
+        protection = ProtectionHookFactory.create(this)
+    }
+}
+
+// In event handler (already on tick thread - safe)
+@EventHandler
+fun onBlockPlace(event: BlockPlaceEvent) {
+    if (!plugin.protection.canBuild(event.player, event.block.location)) {
+        event.isCancelled = true
+        event.player.sendMessage("You cannot build here!")
+    }
+}
+
+@EventHandler
+fun onBlockBreak(event: BlockBreakEvent) {
+    if (!plugin.protection.canBreak(event.player, event.block.location)) {
+        event.isCancelled = true
+        event.player.sendMessage("You cannot break blocks here!")
+    }
+}
+
+// From coroutine (switch to entity context first - WorldGuard requires tick thread)
+pluginScope.launch {
+    player.withPlayerContext(plugin) {
+        if (protection.canBuild(player, targetLocation)) {
+            // Player can build at target location
+        }
+    }
+}
+```
+
+**Supported Plugins:**
+- **WorldGuard** - Region-based protection (checks `BLOCK_PLACE` / `BLOCK_BREAK` flags)
+- **Lands** - Land claim protection (checks `BLOCK_PLACE` / `BLOCK_BREAK` role flags)
+
+**Thread Safety:** Must be called from entity/region thread (Folia) or main thread (Paper). WorldGuard requires main thread access for SessionManager.
+
+**Behavior:**
+- Returns `true` if no protection plugins are installed (graceful degradation)
+- When multiple plugins are installed, ALL must allow for the action to return `true`
+- Wilderness (unclaimed areas in Lands) allows building/breaking by default
+
+
 ### Safe Location Utilities
 
 Folia-compatible safe teleport location detection with comprehensive hazard checking:
@@ -901,6 +958,8 @@ tasks.shadowJar {
 | Dependency | Purpose | Notes |
 |------------|---------|-------|
 | [PacketEvents](https://github.com/retrooper/packetevents) | GlowingService | Enables per-player glowing entities. Without it, GlowingService gracefully degrades to no-ops. |
+| [WorldGuard](https://github.com/EngineHub/WorldGuard) | ProtectionChecker | Enables region-based build permission checks. |
+| [Lands](https://github.com/IncrediblePlugins/LandsAPI) | ProtectionChecker | Enables land claim build permission checks. |
 
 ## Library Loader Dependencies
 
@@ -910,6 +969,7 @@ These are loaded via Paper's library loader (available at runtime):
 - kotlinx-coroutines-core 1.10.2
 - HikariCP 7.0.2
 - MariaDB JDBC 3.5.7
+- SQLite JDBC 3.47.2.0
 - Configurate YAML/HOCON 4.2.0
 - Reactor Core 3.8.1
 
