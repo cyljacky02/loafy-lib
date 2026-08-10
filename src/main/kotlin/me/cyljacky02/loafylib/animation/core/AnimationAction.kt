@@ -38,7 +38,7 @@ interface AnimationAction {
      *
      * @param context The animation context
      * @param tick Current tick (0-indexed, 0 to durationTicks-1)
-     * @param progress Progress from 0.0 (start) to 1.0 (end)
+     * @param progress Progress from 1/n to 1.0 (ensures final tick reaches 100%)
      */
     suspend fun tick(context: AnimationContext, tick: Int, progress: Float) {}
 

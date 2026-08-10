@@ -1,7 +1,9 @@
 package me.cyljacky02.loafylib.animation.camera
 
 import me.cyljacky02.loafylib.animation.core.AnimationAction
+import me.cyljacky02.loafylib.animation.core.AnimationCancelledException
 import me.cyljacky02.loafylib.animation.core.AnimationContext
+import me.cyljacky02.loafylib.animation.core.CancellationReason
 import me.cyljacky02.loafylib.animation.core.PlayerStateSnapshot
 import org.bukkit.Location
 
@@ -89,6 +91,19 @@ class CameraAction(
         )
         originalInvulnerable = player.isInvulnerable
 
+        // Start camera control with state snapshot for proper cleanup on quit/death
+        // CameraPacketHandler will handle state restoration if player quits or dies
+        stateSnapshot?.let { snapshot ->
+            CameraPacketHandler.getInstance(plugin).startCameraControl(
+                player = player,
+                stateSnapshot = snapshot,
+                plugin = plugin,
+                wasInvulnerable = originalInvulnerable,
+                makeInvisible = makeInvisible,
+                hideFromOthers = hideFromOthers
+            )
+        }
+
         // Make player invulnerable - most performant approach per Paper docs
         if (makeInvulnerable && !originalInvulnerable) {
             player.isInvulnerable = true
@@ -98,9 +113,6 @@ class CameraAction(
         if (makeInvisible || hideFromOthers) {
             stateSnapshot?.applyCameraAnimationState(player, plugin)
         }
-
-        // Start camera control (enables Y-offset faking + self-interaction prevention)
-        CameraPacketHandler.getInstance(plugin).startCameraControl(player)
 
         // Create and spawn camera entity at first path point
         val startLocation = resolvedPath.first()
@@ -113,6 +125,15 @@ class CameraAction(
     override suspend fun tick(context: AnimationContext, tick: Int, progress: Float) {
         val camera = cameraEntity ?: return
         if (resolvedPath.isEmpty()) return
+
+        // Check if camera control was externally cancelled (e.g., player was teleported by another plugin)
+        // This follows Typewriter's philosophy: don't fight external teleports, just clean up gracefully
+        if (!CameraPacketHandler.getInstance(context.plugin).isUnderCameraControl(context.player)) {
+            throw AnimationCancelledException(
+                CancellationReason.EXTERNAL_TELEPORT,
+                "Camera control was lost - player may have been teleported externally"
+            )
+        }
 
         // Interpolate position using Catmull-Rom spline (like Typewriter)
         // This sends a teleport packet EVERY TICK for smooth movement
@@ -132,26 +153,14 @@ class CameraAction(
         }
 
         runCatching {
-            // Stop camera control (disables Y-offset faking)
-            CameraPacketHandler.getInstance(plugin).stopCameraControl(player)
+            // Stop camera control - CameraPacketHandler handles state restoration
+            // skipRestore=false means it will restore state if player is still online
+            // If player quit/died, the event handlers already restored state
+            CameraPacketHandler.getInstance(plugin).stopCameraControl(player, skipRestore = false)
         }
 
-        runCatching {
-            // Restore original player state using comprehensive snapshot
-            if (makeInvulnerable && !originalInvulnerable) {
-                player.isInvulnerable = false
-            }
-
-            // Restore visibility and invisibility state from snapshot
-            stateSnapshot?.restore(
-                player = player,
-                plugin = plugin,
-                restoreLocation = false,
-                restoreVelocity = false,
-                restoreVisibility = hideFromOthers
-            )
-            stateSnapshot = null
-        }
+        // Clear local reference (state restoration is handled by CameraPacketHandler)
+        stateSnapshot = null
     }
     
     /**

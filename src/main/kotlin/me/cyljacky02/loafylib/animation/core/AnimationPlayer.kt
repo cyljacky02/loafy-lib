@@ -9,8 +9,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import me.cyljacky02.loafylib.scheduler.delayTicks
 import me.cyljacky02.loafylib.scheduler.withEntityContext
+import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.entity.Player
+import org.bukkit.event.EventHandler
+import org.bukkit.event.EventPriority
+import org.bukkit.event.HandlerList
+import org.bukkit.event.Listener
+import org.bukkit.event.entity.PlayerDeathEvent
+import org.bukkit.event.player.PlayerQuitEvent
 import org.bukkit.plugin.Plugin
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -30,8 +37,9 @@ import java.util.logging.Logger
  *
  * ## Safety Features
  * - Automatic timeout after [DEFAULT_TIMEOUT_MS] (30 seconds by default)
- * - Proper cleanup on cancellation, timeout, or player disconnect
+ * - Proper cleanup on cancellation, timeout, or player disconnect/death
  * - Effects are always cleared in finally block
+ * - Animations are cancelled when player dies or disconnects
  *
  * @property plugin The plugin instance for scheduling
  * @property provider The animation provider for effects
@@ -43,7 +51,7 @@ class AnimationPlayer(
     private val provider: AnimationProvider,
     private val logger: Logger? = null,
     private val timeoutMs: Long = DEFAULT_TIMEOUT_MS
-) {
+) : Listener {
     companion object {
         /** Default timeout for animations: 30 seconds (600 ticks) */
         const val DEFAULT_TIMEOUT_MS = 30_000L
@@ -54,6 +62,56 @@ class AnimationPlayer(
 
     // Track active animations per player
     private val activeAnimations = ConcurrentHashMap<UUID, Job>()
+
+    // Track if event listener is registered
+    @Volatile
+    private var listenerRegistered = false
+
+    /**
+     * Register event listeners for death/quit handling.
+     * Called automatically on first animation play.
+     */
+    private fun ensureListenerRegistered() {
+        if (listenerRegistered) return
+        synchronized(this) {
+            if (listenerRegistered) return
+            Bukkit.getPluginManager().registerEvents(this, plugin)
+            listenerRegistered = true
+        }
+    }
+
+    /**
+     * Unregister event listeners.
+     * Called when cancelling all animations (e.g., plugin shutdown).
+     */
+    private fun unregisterListener() {
+        if (!listenerRegistered) return
+        synchronized(this) {
+            if (!listenerRegistered) return
+            HandlerList.unregisterAll(this)
+            listenerRegistered = false
+        }
+    }
+
+    /**
+     * Handle player death - cancel any active animation.
+     * This prevents animations from continuing on dead players,
+     * which could cause issues like Y+500 offset being applied after respawn.
+     */
+    @EventHandler(priority = EventPriority.HIGH)
+    fun onPlayerDeath(event: PlayerDeathEvent) {
+        val player = event.entity
+        activeAnimations[player.uniqueId]?.cancel()
+    }
+
+    /**
+     * Handle player quit - cancel any active animation.
+     */
+    @EventHandler(priority = EventPriority.HIGH)
+    fun onPlayerQuit(event: PlayerQuitEvent) {
+        val player = event.player
+        activeAnimations[player.uniqueId]?.cancel()
+    }
 
     /**
      * Play an animation sequence for a player.
@@ -72,11 +130,17 @@ class AnimationPlayer(
         parameters: Map<String, Any> = emptyMap(),
         cancelExisting: Boolean = true
     ): AnimationResult {
+        // Ensure event listener is registered
+        ensureListenerRegistered()
+
         val playerId = player.uniqueId
 
-        // Check player is online
+        // Check player is online and alive
         if (!player.isOnline) {
             return AnimationResult.PlayerDisconnected
+        }
+        if (player.isDead) {
+            return AnimationResult.Error("Player is dead")
         }
 
         // Handle existing animation atomically using compute()
@@ -120,12 +184,19 @@ class AnimationPlayer(
         } catch (e: TimeoutCancellationException) {
             logger?.warning("Animation '${sequence.id}' timed out for player ${player.name} (max: ${timeoutMs}ms)")
             AnimationResult.Error("Animation timed out after ${timeoutMs}ms")
+        } catch (e: AnimationCancelledException) {
+            // Specific cancellation with reason (e.g., external teleport)
+            logger?.fine("Animation '${sequence.id}' cancelled for player ${player.name}: ${e.reason}")
+            AnimationResult.Cancelled(e.reason)
         } catch (e: CancellationException) {
             logger?.fine("Animation '${sequence.id}' cancelled for player ${player.name}")
-            AnimationResult.Cancelled
+            AnimationResult.Cancelled(CancellationReason.CODE)
         } catch (e: PlayerDisconnectedException) {
             logger?.fine("Animation '${sequence.id}' stopped - player ${player.name} disconnected")
             AnimationResult.PlayerDisconnected
+        } catch (e: PlayerDeadException) {
+            logger?.fine("Animation '${sequence.id}' stopped - player ${player.name} died")
+            AnimationResult.Cancelled(CancellationReason.PLAYER_DEATH)
         } catch (e: Exception) {
             logger?.log(Level.WARNING, "Animation '${sequence.id}' failed for player ${player.name}", e)
             AnimationResult.Error(e.message ?: "Unknown error", e)
@@ -212,6 +283,9 @@ class AnimationPlayer(
         if (!player.isOnline) {
             throw PlayerDisconnectedException()
         }
+        if (player.isDead) {
+            throw PlayerDeadException()
+        }
     }
 
     /**
@@ -242,9 +316,13 @@ class AnimationPlayer(
     fun cancelAll() {
         activeAnimations.values.forEach { it.cancel() }
         activeAnimations.clear()
+        unregisterListener()
     }
 }
 
 /** Internal exception for player disconnect detection */
 private class PlayerDisconnectedException : Exception()
+
+/** Internal exception for player death detection */
+private class PlayerDeadException : Exception()
 

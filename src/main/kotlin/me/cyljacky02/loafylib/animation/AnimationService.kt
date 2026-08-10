@@ -7,6 +7,10 @@ import me.cyljacky02.loafylib.animation.provider.AnimationProviderFactory
 import me.cyljacky02.loafylib.plugin.PluginComponent
 import org.bukkit.Location
 import org.bukkit.entity.Player
+import org.bukkit.event.EventHandler
+import org.bukkit.event.EventPriority
+import org.bukkit.event.Listener
+import org.bukkit.event.player.PlayerJoinEvent
 import org.bukkit.plugin.Plugin
 import java.nio.file.Path
 import java.util.logging.Logger
@@ -44,7 +48,7 @@ import java.util.logging.Logger
 class AnimationService(
     private val plugin: Plugin,
     private val logger: Logger? = null
-) : PluginComponent {
+) : PluginComponent, Listener {
 
     /** The animation registry for storing named animations */
     val registry = AnimationRegistry()
@@ -66,6 +70,14 @@ class AnimationService(
 
     override suspend fun initialize() {
         logger?.info("AnimationService enabled - Provider: ${if (provider.isAvailable()) "ready" else "unavailable"}")
+        plugin.server.onlinePlayers.forEach { player ->
+            CameraPacketHandler.restorePersistentCameraControl(player)
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    fun onPlayerJoin(event: PlayerJoinEvent) {
+        CameraPacketHandler.restorePersistentCameraControl(event.player)
     }
 
     override suspend fun shutdown() {

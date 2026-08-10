@@ -50,7 +50,8 @@ class CameraEntity(
     private var currentLocation: Location? = null
 
     /**
-     * Spawn the camera entity at the given location and start spectating.
+     * Spawn the camera entity at the given location.
+     * Call [startSpectating] afterward to attach the player's camera.
      *
      * @param location Initial spawn location
      */

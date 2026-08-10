@@ -31,7 +31,8 @@ data class CompositeAction(
     override suspend fun tick(context: AnimationContext, tick: Int, progress: Float) {
         actions.forEach { action ->
             if (action.durationTicks > 0 && tick < action.durationTicks) {
-                val actionProgress = tick.toFloat() / action.durationTicks
+                // Match AnimationPlayer's formula: progress from 1/n to n/n (1.0)
+                val actionProgress = (tick + 1).toFloat() / action.durationTicks
                 action.tick(context, tick, actionProgress)
             }
         }

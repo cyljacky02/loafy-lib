@@ -9,7 +9,7 @@ import org.bukkit.util.Vector
  * Context passed to all animation actions during execution.
  *
  * Contains the player, plugin reference, locations, and custom parameters.
- * Immutable after creation to ensure thread safety.
+ * Properties are immutable, but actions can store temporary state via [setParam]/[getParam].
  *
  * @property player The player being animated
  * @property plugin The plugin executing the animation
@@ -28,7 +28,8 @@ data class AnimationContext(
 ) {
     // Mutable state storage for actions to use during animation execution
     // This allows actions to store state without having mutable instance variables
-    private val actionState: MutableMap<String, Any> = mutableMapOf()
+    // Uses ConcurrentHashMap for thread-safety in case of future parallel action execution
+    private val actionState: MutableMap<String, Any> = java.util.concurrent.ConcurrentHashMap()
     
     /**
      * Get a typed parameter with a default value.
