@@ -7,7 +7,8 @@ import io.lettuce.core.api.async.RedisAsyncCommands
  * Interface for Redis pipeline operations.
  *
  * Allows batching multiple Redis commands to minimize network round trips.
- * Commands are queued and executed together when the pipeline block completes.
+ * Commands are sent immediately and responses are awaited together when the
+ * pipeline block completes.
  *
  * **Note on Pipelining Behavior:**
  * This implementation uses Lettuce's default "async burst" mode where commands

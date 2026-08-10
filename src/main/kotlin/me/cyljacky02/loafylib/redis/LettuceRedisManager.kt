@@ -1,5 +1,6 @@
 package me.cyljacky02.loafylib.redis
 
+import io.lettuce.core.ClientOptions
 import io.lettuce.core.RedisClient
 import io.lettuce.core.RedisConnectionStateListener
 import io.lettuce.core.RedisURI
@@ -7,6 +8,7 @@ import io.lettuce.core.ScanArgs
 import io.lettuce.core.ScanCursor
 import io.lettuce.core.ScriptOutputType
 import io.lettuce.core.SetArgs
+import io.lettuce.core.SocketOptions
 import io.lettuce.core.api.StatefulRedisConnection
 import io.lettuce.core.api.async.RedisAsyncCommands
 import io.lettuce.core.codec.ByteArrayCodec
@@ -22,6 +24,7 @@ import io.netty.resolver.DefaultAddressResolverGroup
 import java.net.SocketAddress
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.sync.Mutex
@@ -30,7 +33,6 @@ import me.cyljacky02.loafylib.config.RedisConfig
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.logging.Logger
 
@@ -43,6 +45,7 @@ import java.util.logging.Logger
  * - Pipelining support for batch operations
  * - Pub/sub with Lettuce's automatic reconnection and resubscription
  * - Connection state monitoring via RedisConnectionStateListener
+ * - Clean shutdown with awaited ClientResources termination (prevents classloader leaks)
  *
  * This implementation trusts Lettuce's built-in ConnectionWatchdog for:
  * - Automatic reconnection with exponential backoff
@@ -59,7 +62,11 @@ class LettuceRedisManager(
 ) : RedisManager {
 
     companion object {
-        private val CONNECTION_TIMEOUT = Duration.ofSeconds(10)
+        /** Initial retry delay in milliseconds */
+        private const val INITIAL_RETRY_DELAY_MS = 500L
+
+        /** Maximum retry delay in milliseconds (8 seconds) */
+        private const val MAX_RETRY_DELAY_MS = 8000L
     }
 
     // CoroutineScope is recreated on each connect() to support disconnect/reconnect cycles.
@@ -120,7 +127,25 @@ class LettuceRedisManager(
                 // 1. Create client resources if not already created.
                 // We use DefaultAddressResolverGroup.INSTANCE instead of Netty's DnsAddressResolverGroup
                 // to avoid Netty DNS resolver initialization overhead.
+                //
+                // Thread pool sizing:
+                // - IO threads handle all Netty network I/O (send/receive, pub/sub decode)
+                // - Computation threads handle reconnect scheduling, event bus, metrics
+                // - Both pools share across all connections (main + pubsub)
+                // - Minimum is 2 for both (Lettuce MIN_IO_THREADS / MIN_COMPUTATION_THREADS)
+                // - Default poolSize=2 is sufficient for 2 connections with low throughput
+                // - NIO-only (no epoll): one EventLoopGroup, threads assigned round-robin
                 if (clientResources == null) {
+                    // On macOS, disable Lettuce's kqueue transport detection.
+                    // Lettuce's ConnectionBuilder blocks Java NIO ExtendedSocketOptions when kqueue
+                    // is detected, but kqueue doesn't support extended TCP keepalive (idle/interval/count).
+                    // Disabling kqueue forces NIO transport, allowing Java 11+ jdk.net.ExtendedSocketOptions
+                    // to apply extended keepalive settings on macOS 10.15+.
+                    // Must be set BEFORE DefaultClientResources construction (KqueueProvider caches in static init).
+                    if (System.getProperty("os.name")?.lowercase()?.contains("mac") == true) {
+                        System.setProperty("io.lettuce.core.kqueue", "false")
+                    }
+
                     clientResources = DefaultClientResources.builder()
                         .ioThreadPoolSize(config.poolSize.coerceAtLeast(2))
                         .computationThreadPoolSize(config.poolSize.coerceAtLeast(2))
@@ -134,7 +159,8 @@ class LettuceRedisManager(
                     .withHost(config.host)
                     .withPort(config.port)
                     .withDatabase(config.database)
-                    .withTimeout(CONNECTION_TIMEOUT)
+                    .withTimeout(Duration.ofSeconds(config.timeoutSeconds))
+                    .withSsl(config.ssl)
 
                 if (config.password.isNotEmpty()) {
                     uriBuilder.withPassword(config.password.toCharArray())
@@ -142,8 +168,22 @@ class LettuceRedisManager(
 
                 val redisUri = uriBuilder.build()
 
-                // 3. Create client
-                redisClient = RedisClient.create(clientResources, redisUri)
+                // 3. Create client with TCP keepalive for dead connection detection.
+                // Keepalive formula: detection time = idle + interval * count = 15 + 5*3 = 30s
+                // Uses Java 11+ ExtendedSocketOptions on NIO (kqueue disabled on macOS, see above).
+                // TcpUserTimeoutOptions omitted: requires native epoll transport (excluded from build).
+                redisClient = RedisClient.create(clientResources, redisUri).apply {
+                    setOptions(ClientOptions.builder()
+                        .socketOptions(SocketOptions.builder()
+                            .keepAlive(SocketOptions.KeepAliveOptions.builder()
+                                .enable()
+                                .idle(Duration.ofSeconds(15))
+                                .interval(Duration.ofSeconds(5))
+                                .count(3)
+                                .build())
+                            .build())
+                        .build())
+                }
 
                 // 4. Create main connection with custom codec
                 try {
@@ -222,11 +262,32 @@ class LettuceRedisManager(
 
     /**
      * Sets up the pub/sub message listener.
+     *
+     * Handlers are dispatched off the Netty EventLoop via the coroutine scope
+     * to prevent blocking Redis I/O if a handler does heavy work.
      */
     private fun setupPubSubListener() {
         pubSubConnection?.addListener(object : RedisPubSubAdapter<String, ByteArray>() {
             override fun message(channel: String, message: ByteArray) {
-                subscriptionHandlers[channel]?.invoke(message)
+                val handler = subscriptionHandlers[channel] ?: return
+                // Dispatch off Netty EventLoop to avoid blocking Redis I/O
+                val scope = coroutineScope
+                if (scope != null) {
+                    scope.launch {
+                        try {
+                            handler(message)
+                        } catch (e: Exception) {
+                            logger.warning("Pub/sub handler for channel '$channel' failed: ${e.message}")
+                        }
+                    }
+                } else {
+                    // Fallback: invoke directly if scope is unavailable (shouldn't happen in normal flow)
+                    try {
+                        handler(message)
+                    } catch (e: Exception) {
+                        logger.warning("Pub/sub handler for channel '$channel' failed: ${e.message}")
+                    }
+                }
             }
         })
     }
@@ -241,7 +302,9 @@ class LettuceRedisManager(
 
             logger.info("Disconnecting from Redis...")
 
-            withContext(Dispatchers.IO) {
+            // NonCancellable ensures cleanup completes even if the calling coroutine
+            // is cancelled — prevents Netty thread leaks on cancellation during disconnect.
+            withContext(NonCancellable + Dispatchers.IO) {
                 cleanup()
             }
 
@@ -259,8 +322,15 @@ class LettuceRedisManager(
     /**
      * Cleans up connection resources. Called on disconnect or connection failure.
      * Note: ClientResources are NOT cleaned up here to allow reuse across reconnection cycles.
+     *
+     * Wrapped in [NonCancellable] to guarantee resource release even if the calling
+     * coroutine is cancelled mid-cleanup (e.g. during connect() error paths or plugin shutdown).
+     * Without this, cancellation could interrupt shutdownAsync().await(), leaving Netty
+     * event loop threads alive and causing classloader leaks on plugin reload.
+     *
+     * Must be called from a Dispatchers.IO context (uses suspending shutdownAsync).
      */
-    private fun cleanup() {
+    private suspend fun cleanup() = withContext(NonCancellable) {
         try {
             pubSubConnection?.close()
         } catch (e: Exception) {
@@ -276,7 +346,10 @@ class LettuceRedisManager(
         connection = null
 
         try {
-            redisClient?.shutdown()
+            // Use shutdownAsync().await() instead of blocking shutdown()
+            // RedisClient.shutdown() internally calls shutdownAsync().get() which blocks the thread.
+            // Since we're in a coroutine context, we can suspend instead.
+            redisClient?.shutdownAsync()?.await()
         } catch (e: Exception) {
             logger.warning("Error shutting down Redis client: ${e.message}")
         }
@@ -289,19 +362,29 @@ class LettuceRedisManager(
         connectMutex.withLock {
             logger.info("Shutting down Redis manager...")
 
-            withContext(Dispatchers.IO) {
+            // NonCancellable ensures the entire shutdown sequence completes even if
+            // the calling coroutine is cancelled — both client and ClientResources must
+            // be fully shut down to prevent Netty event loop thread leaks on plugin reload.
+            withContext(NonCancellable + Dispatchers.IO) {
                 cleanup()
 
                 // Now shutdown ClientResources (thread pools, event loops)
+                // Must await completion to prevent lingering Netty threads on plugin reload
                 if (clientResourcesOwned && clientResources != null) {
                     try {
-                        clientResources?.shutdown()
+                        // Use shutdown(quietPeriod, timeout, unit) + await() instead of
+                        // blocking get(). The timeout is handled by Lettuce itself,
+                        // and await() properly suspends rather than blocking the thread.
+                        // We're inside NonCancellable so await() won't be interrupted.
+                        clientResources?.shutdown(0, 5, java.util.concurrent.TimeUnit.SECONDS)?.await()
                     } catch (e: Exception) {
                         logger.warning("Error shutting down client resources: ${e.message}")
                     }
                     clientResources = null
                     clientResourcesOwned = false
                 }
+
+                reconnectCallbacks.clear()
             }
 
             try {
@@ -320,6 +403,8 @@ class LettuceRedisManager(
 
         return try {
             command(conn.async())
+        } catch (e: CancellationException) {
+            throw e // Don't wrap cancellation — required for structured concurrency
         } catch (e: Exception) {
             throw RedisConnectionException("Redis command failed: ${e.message}", e)
         }
@@ -344,6 +429,8 @@ class LettuceRedisManager(
             ).await()
 
             resultMapper(result)
+        } catch (e: CancellationException) {
+            throw e // Don't wrap cancellation — required for structured concurrency
         } catch (e: io.lettuce.core.RedisCommandExecutionException) {
             throw RedisScriptException("Lua script execution failed: ${e.message}", script, e)
         } catch (e: RedisScriptException) {
@@ -360,6 +447,8 @@ class LettuceRedisManager(
             val pipeline = RedisPipelineImpl(conn.async())
             commands(pipeline)
             pipeline.awaitAll()
+        } catch (e: CancellationException) {
+            throw e // Don't wrap cancellation — required for structured concurrency
         } catch (e: RedisPipelineException) {
             throw e
         } catch (e: Exception) {
@@ -376,6 +465,9 @@ class LettuceRedisManager(
         try {
             pubSub.async().subscribe(channel).await()
             logger.info("Subscribed to Redis channel: $channel")
+        } catch (e: CancellationException) {
+            subscriptionHandlers.remove(channel)
+            throw e // Don't wrap cancellation — required for structured concurrency
         } catch (e: Exception) {
             subscriptionHandlers.remove(channel)
             throw RedisConnectionException("Failed to subscribe to channel $channel: ${e.message}", e)
@@ -388,6 +480,8 @@ class LettuceRedisManager(
             try {
                 pubSubConnection?.async()?.unsubscribe(channel)?.await()
                 logger.info("Unsubscribed from Redis channel: $channel")
+            } catch (e: CancellationException) {
+                throw e // Don't wrap cancellation — required for structured concurrency
             } catch (e: Exception) {
                 logger.warning("Failed to unsubscribe from channel $channel: ${e.message}")
             }
@@ -399,6 +493,8 @@ class LettuceRedisManager(
 
         try {
             conn.async().publish(channel, message).await()
+        } catch (e: CancellationException) {
+            throw e // Don't wrap cancellation — required for structured concurrency
         } catch (e: Exception) {
             throw RedisConnectionException("Failed to publish to channel $channel: ${e.message}", e)
         }
@@ -435,6 +531,35 @@ class LettuceRedisManager(
         return AutoCloseable { reconnectCallbacks.remove(callback) }
     }
 
+    override suspend fun <T> withRetry(maxRetries: Int, operation: suspend () -> T): T {
+        require(maxRetries > 0) { "maxRetries must be positive" }
+
+        var lastException: Exception? = null
+        var delayMs = INITIAL_RETRY_DELAY_MS
+
+        repeat(maxRetries) { attempt ->
+            try {
+                return operation()
+            } catch (e: CancellationException) {
+                throw e // Don't wrap cancellation — required for structured concurrency
+            } catch (e: RedisScriptException) {
+                throw e // Script errors (syntax, WRONGTYPE) are not transient — don't retry
+            } catch (e: Exception) {
+                lastException = e
+                logger.warning("Redis operation failed (attempt ${attempt + 1}/$maxRetries): ${e.message}")
+                if (attempt < maxRetries - 1) {
+                    delay(delayMs)
+                    delayMs = (delayMs * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
+                }
+            }
+        }
+
+        throw RedisConnectionException(
+            "Redis operation failed after $maxRetries retries: ${lastException?.message}",
+            lastException
+        )
+    }
+
     /**
      * Invokes all registered reconnect callbacks.
      */
@@ -446,6 +571,12 @@ class LettuceRedisManager(
         for (callback in reconnectCallbacks) {
             try {
                 callback()
+            } catch (e: CancellationException) {
+                // If OUR scope is being cancelled, propagate immediately.
+                // If the callback itself threw CancellationException internally,
+                // ensureActive() won't throw and we continue with remaining callbacks.
+                coroutineContext.ensureActive()
+                logger.warning("Reconnect callback cancelled: ${e.message}")
             } catch (e: Exception) {
                 logger.warning("Reconnect callback failed: ${e.message}")
             }
@@ -460,7 +591,7 @@ internal class RedisPipelineImpl(
     private val async: RedisAsyncCommands<String, ByteArray>
 ) : RedisPipeline {
 
-    private val futures = ConcurrentLinkedQueue<RedisFuture<*>>()
+    private val futures = ArrayList<RedisFuture<*>>()
 
     @Suppress("UNCHECKED_CAST")
     private fun <T> track(future: RedisFuture<out T>): RedisFuture<T> {
@@ -603,38 +734,44 @@ internal class RedisPipelineImpl(
 
     /**
      * Awaits completion of all queued futures using a single suspension point.
+     *
+     * Uses a `finally` block to guarantee [futures] is cleared even on cancellation,
+     * preventing stale futures from leaking into subsequent pipeline uses.
      */
     suspend fun awaitAll() {
         if (futures.isEmpty()) return
 
-        val futuresArray = futures.toTypedArray()
+        // Convert once to CompletableFuture array for both allOf and error collection
+        val completableFutures = Array(futures.size) { futures[it].toCompletableFuture() }
 
         try {
-            CompletableFuture.allOf(
-                *futuresArray.map { it.toCompletableFuture() }.toTypedArray()
-            ).await()
-        } catch (_: Exception) {
-            // allOf completes exceptionally if ANY future fails.
-            // We iterate individual futures below to collect ALL failures.
-        }
-
-        // Collect failures from completed futures (non-blocking since all are done)
-        val failures = futuresArray.mapNotNull { future ->
             try {
-                future.toCompletableFuture().getNow(null)
-                null
-            } catch (e: Exception) {
-                e.cause ?: e
+                CompletableFuture.allOf(*completableFutures).await()
+            } catch (e: CancellationException) {
+                throw e // Don't swallow cancellation — required for structured concurrency
+            } catch (_: Exception) {
+                // allOf completes exceptionally if ANY future fails.
+                // We iterate individual futures below to collect ALL failures.
             }
-        }
 
-        futures.clear()
+            // Collect failures from completed futures (non-blocking since all are done)
+            val failures = completableFutures.mapNotNull { cf ->
+                try {
+                    cf.getNow(null)
+                    null
+                } catch (e: Exception) {
+                    e.cause ?: e
+                }
+            }
 
-        if (failures.isNotEmpty()) {
-            throw RedisPipelineException(
-                "Redis pipeline failed with ${failures.size} error(s). First error: ${failures.first().message}",
-                failures
-            )
+            if (failures.isNotEmpty()) {
+                throw RedisPipelineException(
+                    "Redis pipeline failed with ${failures.size} error(s). First error: ${failures.first().message}",
+                    failures
+                )
+            }
+        } finally {
+            futures.clear()
         }
     }
 }

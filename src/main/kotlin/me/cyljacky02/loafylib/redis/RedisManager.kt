@@ -200,4 +200,26 @@ interface RedisManager : PluginComponent {
      * @return An AutoCloseable handle to unregister the callback - MUST be closed in onPluginDisable()
      */
     fun onReconnect(callback: suspend () -> Unit): AutoCloseable
+
+    /**
+     * Executes a Redis operation with exponential backoff retry logic.
+     *
+     * This method handles transient Redis errors (connection timeouts, network blips)
+     * by retrying with exponential backoff. The backoff sequence is:
+     * 500ms → 1s → 2s → 4s → 8s (max)
+     *
+     * **Non-retryable errors** (e.g., Lua script syntax errors, WRONGTYPE) propagate immediately.
+     *
+     * ```kotlin
+     * val result = redis.withRetry {
+     *     redis.execute { get("player:$uuid".toByteArray()) }
+     * }
+     * ```
+     *
+     * @param maxRetries Maximum number of retry attempts (default: 3)
+     * @param operation The Redis operation to execute
+     * @return The result of the operation
+     * @throws RedisConnectionException if all retries are exhausted or a non-retryable error occurs
+     */
+    suspend fun <T> withRetry(maxRetries: Int = 3, operation: suspend () -> T): T
 }
