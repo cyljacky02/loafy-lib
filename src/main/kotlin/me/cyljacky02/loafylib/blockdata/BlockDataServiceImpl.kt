@@ -1,9 +1,7 @@
 package me.cyljacky02.loafylib.blockdata
 
-import me.cyljacky02.loafylib.plugin.PluginComponent
 import org.bukkit.Bukkit
 import org.bukkit.Chunk
-import org.bukkit.NamespacedKey
 import org.bukkit.block.Block
 import org.bukkit.persistence.PersistentDataType
 import org.bukkit.plugin.Plugin
@@ -20,9 +18,8 @@ import java.util.concurrent.ConcurrentHashMap
  * ## Storage Architecture
  *
  * Block data is stored as nested TAG_CONTAINER entries within the chunk's PDC:
- * - Key format: `{plugin_namespace}:x{relX}y{absY}z{relZ}`
- * - relX/relZ: Block coordinates relative to chunk (0-15)
- * - absY: Absolute Y coordinate (full range, e.g., -64 to 320)
+ * - Key format: `{plugin_namespace}:{5-char hex}` (bit-packed coordinates)
+ * - See [BlockPDC.createBlockKey] for coordinate encoding details
  *
  * ## Thread Safety
  *
@@ -46,20 +43,12 @@ class BlockDataServiceImpl(
 ) : BlockDataService {
 
     /**
-     * Tracks blocks modified in the current tick to prevent data loss during BlockPlaceEvent.
-     * Thread-safe for Folia's region threading model.
-     */
-    private val dirtyBlocks = ConcurrentHashMap.newKeySet<BlockEntry>()
-
-    /**
      * Registered listeners per plugin for automatic lifecycle management.
      */
     private val registeredListeners = ConcurrentHashMap.newKeySet<String>()
 
     override fun getBlockData(block: Block, plugin: Plugin): BlockPDC {
-        return BlockPDC(block, plugin) {
-            markDirty(block)
-        }
+        return BlockPDC(block, plugin)
     }
 
     override fun hasBlockData(block: Block, plugin: Plugin): Boolean {
@@ -70,7 +59,7 @@ class BlockDataServiceImpl(
 
     override fun getBlocksWithData(chunk: Chunk, plugin: Plugin): Set<Block> {
         val chunkPdc = chunk.persistentDataContainer
-        val namespace = plugin.name.lowercase()
+        val namespace = plugin.namespace()
         val world = chunk.world
         val chunkX = chunk.x
         val chunkZ = chunk.z
@@ -84,7 +73,7 @@ class BlockDataServiceImpl(
                     val worldZ = (chunkZ shl 4) + relZ
                     
                     // Validate Y is within world bounds
-                    if (absY >= world.minHeight && absY <= world.maxHeight) {
+                    if (absY >= world.minHeight && absY < world.maxHeight) {
                         world.getBlockAt(worldX, absY, worldZ)
                     } else {
                         null
@@ -125,7 +114,10 @@ class BlockDataServiceImpl(
 
     override suspend fun shutdown() {
         // Clear dirty blocks on shutdown
-        dirtyBlocks.clear()
+        DirtyBlockTracker.clear(loafyLibPlugin.name)
+        for (pluginName in registeredListeners) {
+            DirtyBlockTracker.clear(pluginName)
+        }
         registeredListeners.clear()
     }
 
@@ -134,39 +126,10 @@ class BlockDataServiceImpl(
     // ==========================================================================
 
     /**
-     * Marks a block as dirty (modified in current tick).
-     * Used to prevent data loss during BlockPlaceEvent.
-     */
-    private fun markDirty(block: Block) {
-        if (!loafyLibPlugin.isEnabled) return
-
-        val entry = BlockEntry(
-            worldId = block.world.uid,
-            x = block.x,
-            y = block.y,
-            z = block.z
-        )
-        dirtyBlocks.add(entry)
-
-        // Schedule cleanup after 1 tick using Folia-compatible scheduler
-        Bukkit.getGlobalRegionScheduler().runDelayed(loafyLibPlugin, {
-            dirtyBlocks.remove(entry)
-        }, 1L)
-    }
-
-    /**
      * Checks if a block was modified in the current tick.
      * Used by BlockDataListener to skip BlockPlaceEvent for recently modified blocks.
      */
-    internal fun isDirty(block: Block): Boolean {
-        val entry = BlockEntry(
-            worldId = block.world.uid,
-            x = block.x,
-            y = block.y,
-            z = block.z
-        )
-        return dirtyBlocks.contains(entry)
-    }
+    internal fun isDirty(block: Block, plugin: Plugin): Boolean = DirtyBlockTracker.isDirty(plugin, block)
 
     /**
      * Removes block data for a specific block and plugin.
@@ -199,4 +162,45 @@ class BlockDataServiceImpl(
         val y: Int,
         val z: Int
     )
+}
+
+internal object DirtyBlockTracker {
+ 
+    private val dirtyBlocksByPlugin = ConcurrentHashMap<String, MutableSet<BlockDataServiceImpl.BlockEntry>>()
+
+    fun markDirty(plugin: Plugin, block: Block) {
+        if (!plugin.isEnabled) return
+
+        val entry = BlockDataServiceImpl.BlockEntry(
+            worldId = block.world.uid,
+            x = block.x,
+            y = block.y,
+            z = block.z
+        )
+
+        val pluginName = plugin.name
+        val dirtyBlocks = dirtyBlocksByPlugin.computeIfAbsent(pluginName) { ConcurrentHashMap.newKeySet() }
+        dirtyBlocks.add(entry)
+
+        Bukkit.getGlobalRegionScheduler().runDelayed(plugin, {
+            dirtyBlocks.remove(entry)
+            // Note: We don't remove empty sets from dirtyBlocksByPlugin here to avoid
+            // race conditions. Empty sets have minimal overhead and are cleaned on shutdown.
+        }, 1L)
+    }
+
+    fun isDirty(plugin: Plugin, block: Block): Boolean {
+        val dirtyBlocks = dirtyBlocksByPlugin[plugin.name] ?: return false
+        val entry = BlockDataServiceImpl.BlockEntry(
+            worldId = block.world.uid,
+            x = block.x,
+            y = block.y,
+            z = block.z
+        )
+        return dirtyBlocks.contains(entry)
+    }
+
+    fun clear(pluginName: String) {
+        dirtyBlocksByPlugin.remove(pluginName)?.clear()
+    }
 }

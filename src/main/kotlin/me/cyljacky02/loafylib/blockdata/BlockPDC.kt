@@ -16,6 +16,14 @@ import org.bukkit.plugin.Plugin
  * - Bits 12-15: relZ (0-15, chunk-relative)
  * - Bits 0-11: absY + 2048 (full Y range support)
  *
+ * ## Thread Safety
+ *
+ * All operations access chunk PDC and require:
+ * - **Paper**: Main server thread
+ * - **Folia**: The region thread that owns the block's chunk
+ *
+ * Use `Location.withRegionContext(plugin)` or `regionDispatcher` for safe access.
+ *
  * ## Usage Example
  *
  * ```kotlin
@@ -132,13 +140,16 @@ class BlockPDC(
     /**
      * The underlying PDC stored in the chunk, lazily loaded.
      */
-    private val pdc: PersistentDataContainer by lazy {
+    private val pdc: PersistentDataContainer by lazy(LazyThreadSafetyMode.NONE) {
         val chunkPdc = block.chunk.persistentDataContainer
         val blockKey = createBlockKey(block, plugin)
         
         chunkPdc.get(blockKey, PersistentDataType.TAG_CONTAINER)
             ?: chunkPdc.adapterContext.newPersistentDataContainer()
     }
+
+    private var transactionDepth = 0
+    private var pendingSave = false
 
     /**
      * Whether this block data is protected from automatic lifecycle changes.
@@ -192,7 +203,7 @@ class BlockPDC(
      *
      * If the PDC is empty, removes the block's entry from the chunk PDC.
      */
-    private fun save() {
+    private fun commitSave() {
         val chunkPdc = block.chunk.persistentDataContainer
         val blockKey = createBlockKey(block, plugin)
         
@@ -201,7 +212,47 @@ class BlockPDC(
         } else {
             chunkPdc.set(blockKey, PersistentDataType.TAG_CONTAINER, pdc)
         }
+        DirtyBlockTracker.markDirty(plugin, block)
         onModified()
+    }
+
+    private fun save() {
+        if (transactionDepth > 0) {
+            pendingSave = true
+            return
+        }
+        commitSave()
+    }
+
+    /**
+     * Executes multiple operations as a batch, deferring save until completion.
+     *
+     * This is more efficient than individual operations as it only writes to
+     * the chunk PDC once at the end of the batch, rather than after each operation.
+     *
+     * ```kotlin
+     * blockPdc.batch {
+     *     set(key1, PersistentDataType.STRING, "value1")
+     *     set(key2, PersistentDataType.INTEGER, 42)
+     *     isProtected = true
+     * }
+     * // Single write to chunk PDC happens here
+     * ```
+     *
+     * @param block the operations to execute as a batch
+     * @return the result of the block
+     */
+    fun <T> batch(block: BlockPDC.() -> T): T {
+        transactionDepth++
+        try {
+            return block()
+        } finally {
+            transactionDepth--
+            if (transactionDepth == 0 && pendingSave) {
+                pendingSave = false
+                commitSave()
+            }
+        }
     }
 
     // ==========================================================================

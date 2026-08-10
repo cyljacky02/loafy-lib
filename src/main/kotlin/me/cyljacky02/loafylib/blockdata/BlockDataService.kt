@@ -12,6 +12,14 @@ import org.bukkit.plugin.Plugin
  * coordinate-based keys, providing automatic persistence without external
  * files or databases.
  *
+ * ## Thread Safety
+ *
+ * All methods access chunk/block data and require:
+ * - **Paper**: Main server thread
+ * - **Folia**: The region thread that owns the block/chunk
+ *
+ * Use `Location.withRegionContext(plugin)` or `regionDispatcher` for safe access.
+ *
  * ## Usage Example
  *
  * ```kotlin

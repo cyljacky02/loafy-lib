@@ -51,7 +51,7 @@ internal class BlockDataListener(
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onBlockPlace(event: BlockPlaceEvent) {
         // Skip if block was modified in the same tick (dirty block tracking)
-        if (service.isDirty(event.block)) return
+        if (service.isDirty(event.block, plugin)) return
         handleBlockRemoval(event.block, event, BlockDataEvent.Reason.BLOCK_PLACE)
     }
 
