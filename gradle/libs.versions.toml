@@ -22,6 +22,13 @@
 # without running `./gradlew build && .github/scripts/smoke-test.sh`.
 paper-api = "1.21.11-R0.1-SNAPSHOT"
 
+# Java toolchain. Dictated by paper-api: the artifact's Gradle module metadata
+# declares `org.gradle.jvm.version`, and resolution fails outright if the
+# toolchain is older. Paper 26.x requires 25, the 1.21 line requires 21. Read by
+# build.gradle.kts and by every workflow's setup-java step, and bumped
+# automatically by the Minecraft update job when a new platform needs more.
+jdk = "21"
+
 # --- Kotlin ------------------------------------------------------------------
 # Deliberately shared by the Kotlin Gradle plugin AND kotlin-stdlib/reflect.
 # The compiler and the stdlib that Paper's library loader fetches at runtime

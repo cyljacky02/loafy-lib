@@ -228,7 +228,7 @@ sourceSets.main {
 }
 
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(libs.versions.jdk.get().toInt())
     compilerOptions {
         freeCompilerArgs.add("-Xemit-jvm-type-annotations")
         freeCompilerArgs.add("-Xannotation-default-target=param-property")

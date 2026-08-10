@@ -27,10 +27,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      # Read straight from the catalog rather than hardcoded here: paper-api
+      # dictates the Java version, and a toolchain older than the one its module
+      # metadata declares cannot resolve the compile classpath at all.
+      - name: Resolve Java toolchain
+        id: jdk
+        run: |
+          echo "version=$(sed -n 's/^jdk[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' gradle/libs.versions.toml | head -n1)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK ${{ steps.jdk.outputs.version }}
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: ${{ steps.jdk.outputs.version }}
           distribution: temurin
 
       - name: Set up Gradle

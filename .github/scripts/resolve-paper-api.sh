@@ -17,14 +17,22 @@
 #   latest  newest stable line overall (1.21.x -> 26.2). A platform jump; must
 #           be requested deliberately.
 #
-# Prints `current=<v>`, `target=<v>`, `updateType=<none|patch|line>` as
-# KEY=VALUE lines suitable for $GITHUB_OUTPUT.
+# Also reports the Java version the target requires. paper-api's Gradle module
+# metadata declares `org.gradle.jvm.version`, and resolution fails outright when
+# the toolchain is older -- Paper 26.x needs 25 while the 1.21 line needs 21. A
+# platform bump that moves paper-api without moving the toolchain cannot even
+# resolve its own compile classpath, so the two have to move together.
+#
+# Prints `current=<v>`, `target=<v>`, `updateType=<none|patch|line>`,
+# `currentJdk=<n>`, `targetJdk=<n>` as KEY=VALUE lines suitable for
+# $GITHUB_OUTPUT.
 
 set -euo pipefail
 
 POLICY="${1:-line}"
 CATALOG="${CATALOG:-gradle/libs.versions.toml}"
-METADATA_URL="https://repo.papermc.io/repository/maven-public/io/papermc/paper/paper-api/maven-metadata.xml"
+PAPER_REPO="https://repo.papermc.io/repository/maven-public/io/papermc/paper/paper-api"
+METADATA_URL="$PAPER_REPO/maven-metadata.xml"
 
 CURRENT="$(sed -n 's/^paper-api[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$CATALOG" | head -n1)"
 [[ -n "$CURRENT" ]] || { echo "could not read paper-api from $CATALOG" >&2; exit 1; }
@@ -82,6 +90,41 @@ else
     UPDATE_TYPE="line"
 fi
 
+# The Java version an artifact demands, read from its Gradle module metadata.
+# Snapshots need the timestamped filename resolved from the version's own
+# maven-metadata first. Several variants declare a version; take the highest.
+required_jdk_for() {
+    local artifact="$1" module_url timestamp
+
+    if [[ "$artifact" == *-SNAPSHOT ]]; then
+        timestamp="$(curl -fsSL "$PAPER_REPO/$artifact/maven-metadata.xml" 2>/dev/null \
+            | grep -o '<value>[^<]*' | head -n1 | sed 's|<value>||')" || return 0
+        [[ -n "$timestamp" ]] || return 0
+        module_url="$PAPER_REPO/$artifact/paper-api-$timestamp.module"
+    else
+        module_url="$PAPER_REPO/$artifact/paper-api-$artifact.module"
+    fi
+
+    curl -fsSL "$module_url" 2>/dev/null \
+        | grep -o '"org\.gradle\.jvm\.version"[[:space:]]*:[[:space:]]*[0-9]\+' \
+        | grep -o '[0-9]\+$' \
+        | sort -rn | head -n1
+}
+
+CURRENT_JDK="$(sed -n 's/^jdk[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$CATALOG" | head -n1)"
+[[ -n "$CURRENT_JDK" ]] || { echo "could not read jdk from $CATALOG" >&2; exit 1; }
+
+REQUIRED_JDK="$(required_jdk_for "$TARGET" || true)"
+
+# Never propose lowering the toolchain: a newer Paper needing an older JDK is
+# not a reason to downgrade, and an unreadable module file must not silently
+# rewrite a working configuration.
+if [[ -n "$REQUIRED_JDK" ]] && (( REQUIRED_JDK > CURRENT_JDK )); then
+    TARGET_JDK="$REQUIRED_JDK"
+else
+    TARGET_JDK="$CURRENT_JDK"
+fi
+
 cat <<EOF
 current=$CURRENT
 currentMinecraft=$CURRENT_MC
@@ -89,4 +132,7 @@ target=$TARGET
 targetMinecraft=$TARGET_MC
 targetLine=$TARGET_LINE
 updateType=$UPDATE_TYPE
+currentJdk=$CURRENT_JDK
+requiredJdk=${REQUIRED_JDK:-unknown}
+targetJdk=$TARGET_JDK
 EOF

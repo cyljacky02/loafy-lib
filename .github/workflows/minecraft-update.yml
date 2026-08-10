@@ -53,17 +53,23 @@ jobs:
         run: |
           echo "Already on \`${{ steps.resolve.outputs.current }}\` — nothing to do." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Apply the new version to the catalog
+      # The toolchain moves with the platform. paper-api's module metadata
+      # declares the Java version it needs, and Gradle refuses to resolve the
+      # compile classpath against an older toolchain -- so bumping paper-api
+      # alone produces a failure that looks like a broken dependency rather than
+      # a missing JDK.
+      - name: Apply the new versions to the catalog
         if: steps.resolve.outputs.updateType != 'none'
         run: |
           sed -i 's|^paper-api = ".*"$|paper-api = "${{ steps.resolve.outputs.target }}"|' gradle/libs.versions.toml
-          git diff --stat
+          sed -i 's|^jdk = ".*"$|jdk = "${{ steps.resolve.outputs.targetJdk }}"|' gradle/libs.versions.toml
+          git diff -- gradle/libs.versions.toml
 
-      - name: Set up JDK 21
+      - name: Set up JDK ${{ steps.resolve.outputs.targetJdk }}
         if: steps.resolve.outputs.updateType != 'none'
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: ${{ steps.resolve.outputs.targetJdk }}
           distribution: temurin
 
       - name: Set up Gradle
@@ -106,6 +112,8 @@ jobs:
           CURRENT_MC: ${{ steps.resolve.outputs.currentMinecraft }}
           TARGET: ${{ steps.resolve.outputs.target }}
           TARGET_MC: ${{ steps.resolve.outputs.targetMinecraft }}
+          CURRENT_JDK: ${{ steps.resolve.outputs.currentJdk }}
+          TARGET_JDK: ${{ steps.resolve.outputs.targetJdk }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
           SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -147,6 +155,11 @@ jobs:
             echo "| Current | \`${CURRENT}\` |"
             echo "| Target | \`${TARGET}\` |"
             echo "| Change | ${change_desc} |"
+            if [[ "$CURRENT_JDK" != "$TARGET_JDK" ]]; then
+              echo "| Java toolchain | \`${CURRENT_JDK}\` -> \`${TARGET_JDK}\` (required by this platform) |"
+            else
+              echo "| Java toolchain | \`${TARGET_JDK}\` (unchanged) |"
+            fi
             echo ""
             echo "### Validation"
             echo ""
@@ -157,6 +170,7 @@ jobs:
             echo "### Changing this one line also moves"
             echo ""
             echo "- the \`paper-api\` compile dependency"
+            echo "- the Java toolchain, in Gradle and in every workflow's setup-java"
             echo "- \`runServer { minecraftVersion(...) }\` for local testing"
             echo "- \`api-version\` in \`paper-plugin.yml\`"
             echo "- the Paper build the smoke test boots"
@@ -171,7 +185,7 @@ jobs:
               echo ""
               echo "- Re-check the shaded stack: InvUI ships NMS code pinned per Minecraft version, and it is deliberately *not* relocated because it injects into Paper's Netty pipeline."
               echo "- Confirm the soft dependencies (WorldGuard, Lands, Residence, GriefPrevention, PacketEvents) have builds for this version."
-              echo "- Newer Paper lines may require a newer Java runtime than the JDK 21 toolchain this repository pins."
+              echo "- The Java toolchain has been moved to ${TARGET_JDK} to match this platform. Servers running this build will need a Java ${TARGET_JDK} runtime."
               echo "- The sibling Loafy plugins consume this library and need the same jump."
             } >> pr-body.md
           fi
