@@ -4,24 +4,27 @@ import org.bukkit.plugin.Plugin
 import org.spongepowered.configurate.ConfigurateException
 import org.spongepowered.configurate.ConfigurationNode
 import org.spongepowered.configurate.ConfigurationOptions
-import org.spongepowered.configurate.kotlin.dataClassFieldDiscoverer
 import org.spongepowered.configurate.kotlin.extensions.get
+import org.spongepowered.configurate.kotlin.extensions.typedSet
 import org.spongepowered.configurate.kotlin.kotlinCommentsProcessor
+import io.leangen.geantyref.TypeToken
 import org.spongepowered.configurate.objectmapping.ObjectMapper
 import org.spongepowered.configurate.objectmapping.meta.Comment
+import org.spongepowered.configurate.serialize.TypeSerializerCollection
 import org.spongepowered.configurate.yaml.NodeStyle
 import org.spongepowered.configurate.yaml.YamlConfigurationLoader
 import java.nio.file.Files
 import java.nio.file.Path
 import me.cyljacky02.loafylib.scheduler.asyncDispatcher
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration
 
 /**
  * Utility functions for working with Sponge Configurate YAML configuration.
  *
  * Provides standardized configuration loading with:
  * - BLOCK node style for readable YAML output
- * - Kotlin data class support via objectMapperFactory()
+ * - Kotlin data class support via dataClassFieldDiscoverer()
  * - kotlinCommentsProcessor for proper @Comment handling with trimIndent()
  * - shouldCopyDefaults(true) for automatic default population
  * - Extension functions for common operations
@@ -47,17 +50,18 @@ object ConfigurateUtils {
 
     /**
      * Kotlin-optimized ObjectMapper factory configured with:
-     * - [dataClassFieldDiscoverer] for Kotlin data class constructor parameter mapping
+     * - [LoafyDataClassFieldDiscoverer] for Kotlin data class constructor parameter mapping
+     *   while preserving generic type information (e.g., List<String>)
      * - [kotlinCommentsProcessor] for @Comment with trimIndent() on multi-line strings
      *
      * Note: We build manually rather than using objectMapperFactory() because
      * the pre-built factory only includes DataClassFieldDiscoverer but not
      * kotlinCommentsProcessor. The @field: prefix is NOT required on @Comment
-     * annotations - DataClassFieldDiscoverer combines annotations from parameter,
-     * parameter type, and backing field automatically.
+     * annotations - the discoverer combines annotations from parameter,
+     * parameter type, backing field, and getter automatically.
      */
     private val kotlinObjectMapperFactory: ObjectMapper.Factory = ObjectMapper.factoryBuilder()
-        .addDiscoverer(dataClassFieldDiscoverer())
+        .addDiscoverer(LoafyDataClassFieldDiscoverer)
         .addProcessor(Comment::class.java, kotlinCommentsProcessor())
         .build()
 
@@ -81,10 +85,35 @@ object ConfigurateUtils {
             .nodeStyle(NodeStyle.BLOCK)
             .defaultOptions { options ->
                 options
-                    .serializers { it.registerAnnotatedObjects(kotlinObjectMapperFactory) }
+                    .serializers {
+                        it.registerAnnotatedObjects(kotlinObjectMapperFactory)
+                        it.register(Duration::class.java, DurationTypeSerializer())
+                    }
                     .shouldCopyDefaults(true).let { opts ->
                     if (header != null) opts.header(header) else opts
                 }
+            }
+            .build()
+    }
+
+    fun createYamlLoader(
+        path: Path,
+        header: String? = null,
+        extraSerializers: (TypeSerializerCollection.Builder) -> Unit
+    ): YamlConfigurationLoader {
+        return YamlConfigurationLoader.builder()
+            .path(path)
+            .nodeStyle(NodeStyle.BLOCK)
+            .defaultOptions { options ->
+                options
+                    .serializers {
+                        it.registerAnnotatedObjects(kotlinObjectMapperFactory)
+                        it.register(Duration::class.java, DurationTypeSerializer())
+                        extraSerializers(it)
+                    }
+                    .shouldCopyDefaults(true).let { opts ->
+                        if (header != null) opts.header(header) else opts
+                    }
             }
             .build()
     }
@@ -105,7 +134,10 @@ object ConfigurateUtils {
             .nodeStyle(NodeStyle.BLOCK)
             .defaultOptions { options ->
                 optionsBuilder(options
-                    .serializers { it.registerAnnotatedObjects(kotlinObjectMapperFactory) }
+                    .serializers {
+                        it.registerAnnotatedObjects(kotlinObjectMapperFactory)
+                        it.register(Duration::class.java, DurationTypeSerializer())
+                    }
                     .shouldCopyDefaults(true))
             }
             .build()
@@ -165,7 +197,7 @@ inline fun <reified T : Any> YamlConfigurationLoader.loadConfigOrNull(): T? {
  */
 inline fun <reified T : Any> YamlConfigurationLoader.saveConfig(config: T) {
     val node = createNode()
-    node.set(config)
+    node.typedSet(config)
     save(node)
 }
 
@@ -178,15 +210,24 @@ inline fun <reified T : Any> YamlConfigurationLoader.saveConfig(config: T) {
  * 2. Merge with defaults for any missing values
  * 3. Save the complete configuration back to disk
  *
+ * **First-run behavior**: When the file is missing or empty, the provided [default]
+ * is used directly. This is critical because Configurate's ObjectMapper always
+ * constructs a non-null instance from empty nodes using constructor defaults
+ * (e.g. `emptyMap()`) — the `?: default` fallback would never trigger, causing
+ * rich first-run defaults (like pre-populated drop tables) to be lost.
+ *
  * @param T The configuration class type (must be @ConfigSerializable)
- * @param default The default configuration to use for missing values
+ * @param default The default configuration to use on first run
  * @return The loaded configuration with defaults applied
  * @throws ConfigurateException if loading or saving fails
  */
 inline fun <reified T : Any> YamlConfigurationLoader.loadAndSaveDefaults(default: T): T {
     val node = load()
-    val config = node.get<T>() ?: default
-    node.set(config)
+    // When the node is empty (file missing or blank), ObjectMapper would construct
+    // from constructor defaults (e.g. emptyMap) instead of our rich defaults.
+    // Use the provided default directly in that case.
+    val config = if (node.empty()) default else (node.get<T>() ?: default)
+    node.typedSet(config)
     save(node)
     return config
 }
@@ -214,8 +255,8 @@ inline fun <reified T : Any> ConfigurationNode.getOrDefault(default: T): T {
  * - The returned config object can be used anywhere
  *
  * ## When to use sync vs async
- * - Use async during plugin enable/disable in a coroutine scope
- * - Use sync ([loadConfig]) for one-time blocking loads (e.g., in onEnable before any async work)
+ * - Use sync ([loadConfig]) during plugin enable/disable (runs in runBlocking)
+ * - Use async for runtime config reloading within a coroutine scope
  *
  * @param T The configuration class type (must be @ConfigSerializable)
  * @param default Default value to use if the file doesn't exist or is empty
@@ -223,11 +264,11 @@ inline fun <reified T : Any> ConfigurationNode.getOrDefault(default: T): T {
  * @throws ConfigurateException if loading fails
  */
 suspend inline fun <reified T : Any> YamlConfigurationLoader.loadConfigAsync(default: T? = null): T {
-    val type = T::class.java
+    val typeToken = object : TypeToken<T>() {}
     return withContext(asyncDispatcher) {
         val node = load()
-        node.get(type) ?: default ?: throw ConfigurateException(
-            "Failed to load configuration of type ${type.simpleName}"
+        node.get(typeToken) ?: default ?: throw ConfigurateException(
+            "Failed to load configuration of type ${T::class.simpleName}"
         )
     }
 }
@@ -242,10 +283,10 @@ suspend inline fun <reified T : Any> YamlConfigurationLoader.loadConfigAsync(def
  * @throws ConfigurateException if loading fails due to parsing errors
  */
 suspend inline fun <reified T : Any> YamlConfigurationLoader.loadConfigOrNullAsync(): T? {
-    val type = T::class.java
+    val typeToken = object : TypeToken<T>() {}
     return withContext(asyncDispatcher) {
         val node = load()
-        node.get(type)
+        node.get(typeToken)
     }
 }
 
@@ -259,9 +300,10 @@ suspend inline fun <reified T : Any> YamlConfigurationLoader.loadConfigOrNullAsy
  * @throws ConfigurateException if saving fails
  */
 suspend inline fun <reified T : Any> YamlConfigurationLoader.saveConfigAsync(config: T) {
+    val typeToken = object : TypeToken<T>() {}
     withContext(asyncDispatcher) {
         val node = createNode()
-        node.set(T::class.java, config)
+        node.set(typeToken, config)
         save(node)
     }
 }
@@ -273,17 +315,19 @@ suspend inline fun <reified T : Any> YamlConfigurationLoader.saveConfigAsync(con
  * Ideal for initial plugin setup where you want to ensure the config file
  * exists with all default values.
  *
+ * See [loadAndSaveDefaults] for details on first-run behavior.
+ *
  * @param T The configuration class type (must be @ConfigSerializable)
- * @param default The default configuration to use for missing values
+ * @param default The default configuration to use on first run
  * @return The loaded configuration with defaults applied
  * @throws ConfigurateException if loading or saving fails
  */
 suspend inline fun <reified T : Any> YamlConfigurationLoader.loadAndSaveDefaultsAsync(default: T): T {
-    val type = T::class.java
+    val typeToken = object : TypeToken<T>() {}
     return withContext(asyncDispatcher) {
         val node = load()
-        val config = node.get(type) ?: default
-        node.set(type, config)
+        val config = if (node.empty()) default else (node.get(typeToken) ?: default)
+        node.set(typeToken, config)
         save(node)
         config
     }
