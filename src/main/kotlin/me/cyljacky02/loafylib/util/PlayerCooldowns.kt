@@ -7,15 +7,15 @@ import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
 import org.bukkit.event.player.PlayerQuitEvent
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Per-player cooldown management with automatic cleanup.
  *
  * Tracks cooldowns by player UUID and NamespacedKey, automatically cleaning up
  * when players disconnect. Thread-safe for use from async contexts.
+ *
+ * Built on [KeyedCooldowns] with composite (UUID, NamespacedKey) keys.
  *
  * ## Usage
  *
@@ -45,11 +45,16 @@ import kotlin.time.Duration.Companion.milliseconds
  * ```
  *
  * @see PluginComponent
+ * @see KeyedCooldowns
  */
 class PlayerCooldowns : PluginComponent, Listener {
 
-    // Map<PlayerUUID, Map<CooldownKey, ExpirationTimeMillis>>
-    private val cooldowns = ConcurrentHashMap<UUID, ConcurrentHashMap<NamespacedKey, Long>>()
+    /**
+     * Composite key for player + cooldown type.
+     */
+    private data class PlayerCooldownKey(val playerId: UUID, val key: NamespacedKey)
+
+    private val cooldowns = KeyedCooldowns<PlayerCooldownKey>()
 
     /**
      * Checks if a player is currently on cooldown for the given key.
@@ -59,14 +64,7 @@ class PlayerCooldowns : PluginComponent, Listener {
      * @return true if on cooldown, false otherwise
      */
     fun isOnCooldown(player: Player, key: NamespacedKey): Boolean {
-        val playerCooldowns = cooldowns[player.uniqueId] ?: return false
-        val expiration = playerCooldowns[key] ?: return false
-        
-        if (System.currentTimeMillis() >= expiration) {
-            playerCooldowns.remove(key)
-            return false
-        }
-        return true
+        return cooldowns.isOnCooldown(PlayerCooldownKey(player.uniqueId, key))
     }
 
     /**
@@ -77,10 +75,7 @@ class PlayerCooldowns : PluginComponent, Listener {
      * @param duration How long the cooldown should last
      */
     fun setCooldown(player: Player, key: NamespacedKey, duration: Duration) {
-        val expiration = System.currentTimeMillis() + duration.inWholeMilliseconds
-        cooldowns
-            .computeIfAbsent(player.uniqueId) { ConcurrentHashMap() }
-            .put(key, expiration)
+        cooldowns.setCooldown(PlayerCooldownKey(player.uniqueId, key), duration)
     }
 
     /**
@@ -91,15 +86,7 @@ class PlayerCooldowns : PluginComponent, Listener {
      * @return Remaining duration, or null if no active cooldown
      */
     fun getRemainingCooldown(player: Player, key: NamespacedKey): Duration? {
-        val playerCooldowns = cooldowns[player.uniqueId] ?: return null
-        val expiration = playerCooldowns[key] ?: return null
-        
-        val remaining = expiration - System.currentTimeMillis()
-        if (remaining <= 0) {
-            playerCooldowns.remove(key)
-            return null
-        }
-        return remaining.milliseconds
+        return cooldowns.getRemainingCooldown(PlayerCooldownKey(player.uniqueId, key))
     }
 
     /**
@@ -109,7 +96,7 @@ class PlayerCooldowns : PluginComponent, Listener {
      * @param key The cooldown to clear
      */
     fun clearCooldown(player: Player, key: NamespacedKey) {
-        cooldowns[player.uniqueId]?.remove(key)
+        cooldowns.clear(PlayerCooldownKey(player.uniqueId, key))
     }
 
     /**
@@ -118,12 +105,12 @@ class PlayerCooldowns : PluginComponent, Listener {
      * @param player The player
      */
     fun clearAllCooldowns(player: Player) {
-        cooldowns.remove(player.uniqueId)
+        cooldowns.clearMatching { it.playerId == player.uniqueId }
     }
 
     @EventHandler
     fun onPlayerQuit(event: PlayerQuitEvent) {
-        cooldowns.remove(event.player.uniqueId)
+        cooldowns.clearMatching { it.playerId == event.player.uniqueId }
     }
 
     override suspend fun initialize() {
@@ -131,6 +118,6 @@ class PlayerCooldowns : PluginComponent, Listener {
     }
 
     override suspend fun shutdown() {
-        cooldowns.clear()
+        cooldowns.clearAll()
     }
 }
