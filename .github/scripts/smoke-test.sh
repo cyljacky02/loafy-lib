@@ -18,8 +18,13 @@
 # Every one of those produces a green build and a broken server, which is why
 # no dependency or Minecraft bump is allowed to merge without passing this.
 #
+# It also installs PacketEvents, because LoafyLib's optional integrations never
+# execute when the plugin they hook is missing -- see the soft dependency block
+# below.
+#
 # Usage:
 #   .github/scripts/smoke-test.sh [--jar <path>] [--mc <version>] [--dir <workdir>]
+#                                 [--no-soft-deps]
 #
 # Defaults: newest jar in build/libs, Minecraft version from
 # `./gradlew printMinecraftVersion`, work dir .smoke/
@@ -29,6 +34,7 @@ set -euo pipefail
 JAR=""
 MC_VERSION=""
 WORK_DIR=".smoke"
+WITH_SOFT_DEPS=1
 STARTUP_TIMEOUT="${STARTUP_TIMEOUT:-300}"
 SHUTDOWN_TIMEOUT="${SHUTDOWN_TIMEOUT:-90}"
 
@@ -37,6 +43,7 @@ while [[ $# -gt 0 ]]; do
         --jar) JAR="$2"; shift 2 ;;
         --mc) MC_VERSION="$2"; shift 2 ;;
         --dir) WORK_DIR="$2"; shift 2 ;;
+        --no-soft-deps) WITH_SOFT_DEPS=0; shift ;;
         -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -105,6 +112,41 @@ ACTUAL_SHA="$(sha256sum "$PAPER_JAR" | cut -d' ' -f1)"
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR/plugins"
 cp "$JAR" "$WORK_DIR/plugins/"
+
+# -----------------------------------------------------------------------------
+# Soft dependencies
+#
+# LoafyLib's optional integrations stay inert when the plugin they hook is
+# absent, so a server running LoafyLib alone never executes them at all.
+# PacketEvents is the one that matters: the glowing service and camera
+# animation are built on its protocol mappings, which are Minecraft-version
+# specific. A PacketEvents predating the target platform breaks both features
+# while a LoafyLib-only boot still passes -- which is exactly how v1.2.0 shipped
+# claiming 26.2 support with those features broken.
+#
+# Installing it makes that path initialise, so a mismatch fails here instead.
+# The version comes from the catalog, like everything else.
+# -----------------------------------------------------------------------------
+PACKETEVENTS_VERSION=""
+if (( WITH_SOFT_DEPS == 1 )); then
+    PACKETEVENTS_VERSION="$(sed -n 's/^packetevents[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' \
+        gradle/libs.versions.toml | head -n1)"
+fi
+
+if [[ -n "$PACKETEVENTS_VERSION" ]]; then
+    PE_JAR="$CACHE_DIR/packetevents-spigot-${PACKETEVENTS_VERSION}.jar"
+    PE_URL="https://repo.codemc.io/repository/maven-releases/com/github/retrooper/packetevents-spigot/${PACKETEVENTS_VERSION}/packetevents-spigot-${PACKETEVENTS_VERSION}.jar"
+
+    if [[ ! -f "$PE_JAR" ]]; then
+        log "Downloading PacketEvents ${PACKETEVENTS_VERSION}"
+        curl -fsSL -o "$PE_JAR.tmp" "$PE_URL" \
+            || fail "could not download PacketEvents ${PACKETEVENTS_VERSION} from $PE_URL"
+        mv "$PE_JAR.tmp" "$PE_JAR"
+    fi
+
+    cp "$PE_JAR" "$WORK_DIR/plugins/"
+    log "Installed PacketEvents ${PACKETEVENTS_VERSION} as a soft dependency"
+fi
 
 # Accepting the EULA on a disposable CI server directory, per Mojang's terms.
 echo "eula=true" > "$WORK_DIR/eula.txt"
@@ -239,6 +281,23 @@ grep -q "Enabling ${PLUGIN_NAME}" "$STARTUP_LOG" \
 if grep -q "Disabling ${PLUGIN_NAME}" "$STARTUP_LOG"; then
     grep -n -B 20 "Disabling ${PLUGIN_NAME}" "$STARTUP_LOG" | tail -n 40 >&2
     fail "${PLUGIN_NAME} was disabled during startup"
+fi
+
+# Installing PacketEvents is only worth anything if it actually came up and
+# LoafyLib bound to it. If either half fails, the integration is silently
+# inert -- the plugin still enables and the boot still looks clean.
+if [[ -n "$PACKETEVENTS_VERSION" ]]; then
+    if ! grep -qi "Enabling packetevents" "$STARTUP_LOG"; then
+        grep -n -i "packetevents" "$STARTUP_LOG" | head -n 20 >&2
+        fail "PacketEvents ${PACKETEVENTS_VERSION} did not enable on Paper ${MC_VERSION}"
+    fi
+
+    if grep -q "PacketEvents not found" "$STARTUP_LOG"; then
+        grep -n "infrastructure ready" "$STARTUP_LOG" >&2 || true
+        fail "PacketEvents ${PACKETEVENTS_VERSION} was installed but ${PLUGIN_NAME} did not detect it"
+    fi
+
+    log "PacketEvents ${PACKETEVENTS_VERSION} enabled and detected"
 fi
 
 log "PASS — ${PLUGIN_NAME} enabled on Paper ${MC_VERSION} build ${PAPER_BUILD}"

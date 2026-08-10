@@ -1304,6 +1304,15 @@ plugin enabled with no classloading or resolution errors. Nothing merges or
 releases without passing it — not a Renovate PR, not a Minecraft bump, not a
 release build.
 
+It also installs **PacketEvents**, because the optional integrations never
+execute when the plugin they hook is missing. The glowing service and camera
+animation are built on PacketEvents' protocol mappings, which are
+Minecraft-version specific, so a PacketEvents older than the target platform
+breaks both while a LoafyLib-only boot still passes — which is how v1.2.0
+shipped claiming 26.2 support with those features broken. The test now asserts
+that PacketEvents enables *and* that LoafyLib binds to it. Pass
+`--no-soft-deps` to skip.
+
 Run it yourself after `./gradlew build`:
 
 ```bash
