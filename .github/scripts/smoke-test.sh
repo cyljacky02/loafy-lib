@@ -134,8 +134,17 @@ if (( WITH_SOFT_DEPS == 1 )); then
 fi
 
 if [[ -n "$PACKETEVENTS_VERSION" ]]; then
-    PE_JAR="$CACHE_DIR/packetevents-spigot-${PACKETEVENTS_VERSION}.jar"
-    PE_URL="https://repo.codemc.io/repository/maven-releases/com/github/retrooper/packetevents-spigot/${PACKETEVENTS_VERSION}/packetevents-spigot-${PACKETEVENTS_VERSION}.jar"
+    # The `-plugin` suffix distinguishes this from the API jar of the same
+    # name that an earlier run cached, so a stale download cannot be reused.
+    PE_JAR="$CACHE_DIR/packetevents-spigot-${PACKETEVENTS_VERSION}-plugin.jar"
+
+    # From GitHub Releases, NOT the Maven coordinate the build compiles
+    # against. They share a filename and differ entirely: the Maven artifact is
+    # ~150KB of API classes intended as a compile dependency, while the release
+    # asset is the ~5MB shaded plugin. Installing the Maven one produces a
+    # server that boots fine while PacketEvents dies with
+    # NoClassDefFoundError: com/github/retrooper/packetevents/PacketEventsAPI.
+    PE_URL="https://github.com/retrooper/packetevents/releases/download/v${PACKETEVENTS_VERSION}/packetevents-spigot-${PACKETEVENTS_VERSION}.jar"
 
     if [[ ! -f "$PE_JAR" ]]; then
         log "Downloading PacketEvents ${PACKETEVENTS_VERSION}"
