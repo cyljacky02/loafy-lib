@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/cyljacky02/loafy-lib/compare/v1.2.1...v1.2.2) (2026-08-10)
+
+
+### Bug Fixes
+
+* **test:** stop generating NaN yaw in the location property test ([455ce2f](https://github.com/cyljacky02/loafy-lib/commit/455ce2fe02138c248ba2e2ee4314c9d55c5224f6))
+
 ## [1.2.1](https://github.com/cyljacky02/loafy-lib/compare/v1.2.0...v1.2.1) (2026-08-10)
 
 
