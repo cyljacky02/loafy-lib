@@ -155,6 +155,7 @@ dependencies {
     compileOnly(libs.packetevents.spigot)
 
     // WorldGuard - optional soft dependency for protection checking
+    // (see the Guava/Gson resolution strategy below)
     compileOnly(libs.worldguard.bukkit)
 
     // Lands - optional soft dependency for protection checking
@@ -186,6 +187,23 @@ dependencies {
 // server will fetch.
 configurations.compileOnly.get().extendsFrom(paperLibrary)
 configurations.testImplementation.get().extendsFrom(paperLibrary)
+
+// Paper is the authority on Guava and Gson: it provides both at runtime and
+// neither is shaded here. WorldGuard, WorldEdit and Residence disagree -- they
+// declare `strictly` constraints pinning whatever versions the Minecraft
+// release they target shipped, annotated "Mojang provides Guava". Strict
+// against strict is a hard resolution failure, not a conflict Gradle can
+// arbitrate, and `exclude` does not help because exclusions do not apply to
+// dependency constraints.
+//
+// Forcing at the root overrides every transitive strict constraint at once,
+// which is what we want: the server decides these versions, not a plugin we
+// merely compile against.
+configurations.all {
+    resolutionStrategy {
+        force(libs.guava.coordinate(), libs.gson.coordinate())
+    }
+}
 
 // =============================================================================
 // Generated library-loader manifest

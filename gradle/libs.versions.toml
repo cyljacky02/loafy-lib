@@ -20,14 +20,14 @@
 # build.gradle.kts parses both to derive the Minecraft version (for run-paper
 # and the smoke test) and the paper-plugin.yml api-version. Do not hand-edit
 # without running `./gradlew build && .github/scripts/smoke-test.sh`.
-paper-api = "1.21.11-R0.1-SNAPSHOT"
+paper-api = "26.2.build.111-stable"
 
 # Java toolchain. Dictated by paper-api: the artifact's Gradle module metadata
 # declares `org.gradle.jvm.version`, and resolution fails outright if the
 # toolchain is older. Paper 26.x requires 25, the 1.21 line requires 21. Read by
 # build.gradle.kts and by every workflow's setup-java step, and bumped
 # automatically by the Minecraft update job when a new platform needs more.
-jdk = "21"
+jdk = "25"
 
 # --- Kotlin ------------------------------------------------------------------
 # Deliberately shared by the Kotlin Gradle plugin AND kotlin-stdlib/reflect.
@@ -55,18 +55,26 @@ invui = "2.0.0-beta.1"
 # produces a green build that compiles against APIs the server does not have.
 netty = "4.1.118.Final"
 adventure = "4.25.0"
+# Guava and Gson are server-provided too, but need pinning for a different
+# reason: WorldGuard, WorldEdit and Residence declare `strictly` constraints on
+# them ("Mojang provides Guava") at whatever version the Minecraft release they
+# target shipped. When that disagrees with what Paper declares, strict-vs-strict
+# is a hard resolution failure Gradle cannot arbitrate. These must match the
+# versions the target Paper build ships.
+guava = "33.6.0-jre"
+gson = "2.14.0"
 
 # --- Optional soft dependencies (compile-time only) --------------------------
 lamp = "4.0.0-rc.14"
 packetevents = "2.11.1"
-worldguard = "7.0.13"
+worldguard = "7.0.18"
 lands = "7.23.1"
 residence = "6.0.0.1"
 griefprevention = "18.0.0"
 
 # --- Test --------------------------------------------------------------------
-kotest = "6.0.7"
-mockk = "1.14.2"
+kotest = "6.2.3"
+mockk = "1.14.11"
 
 # --- Gradle plugins ----------------------------------------------------------
 shadow = "9.3.1"
@@ -101,6 +109,8 @@ invui-kotlin = { module = "xyz.xenondevs.invui:invui-kotlin", version.ref = "inv
 
 # Provided by Paper
 netty-resolver = { module = "io.netty:netty-resolver", version.ref = "netty" }
+guava = { module = "com.google.guava:guava", version.ref = "guava" }
+gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 adventure-api = { module = "net.kyori:adventure-api", version.ref = "adventure" }
 adventure-minimessage = { module = "net.kyori:adventure-text-minimessage", version.ref = "adventure" }
 

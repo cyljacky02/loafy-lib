@@ -60,10 +60,24 @@ jobs:
       # a missing JDK.
       - name: Apply the new versions to the catalog
         if: steps.resolve.outputs.updateType != 'none'
+        env:
+          TARGET: ${{ steps.resolve.outputs.target }}
+          TARGET_JDK: ${{ steps.resolve.outputs.targetJdk }}
+          TARGET_GUAVA: ${{ steps.resolve.outputs.targetGuava }}
+          TARGET_GSON: ${{ steps.resolve.outputs.targetGson }}
         run: |
-          sed -i 's|^paper-api = ".*"$|paper-api = "${{ steps.resolve.outputs.target }}"|' gradle/libs.versions.toml
-          sed -i 's|^jdk = ".*"$|jdk = "${{ steps.resolve.outputs.targetJdk }}"|' gradle/libs.versions.toml
-          git diff -- gradle/libs.versions.toml
+          set -euo pipefail
+          catalog=gradle/libs.versions.toml
+
+          sed -i "s|^paper-api = \".*\"$|paper-api = \"$TARGET\"|" "$catalog"
+          sed -i "s|^jdk = \".*\"$|jdk = \"$TARGET_JDK\"|" "$catalog"
+
+          # Only rewrite when the metadata was actually readable -- a blank here
+          # would replace a working pin with an empty version.
+          [[ -n "$TARGET_GUAVA" ]] && sed -i "s|^guava = \".*\"$|guava = \"$TARGET_GUAVA\"|" "$catalog"
+          [[ -n "$TARGET_GSON" ]] && sed -i "s|^gson = \".*\"$|gson = \"$TARGET_GSON\"|" "$catalog"
+
+          git diff -- "$catalog"
 
       - name: Set up JDK ${{ steps.resolve.outputs.targetJdk }}
         if: steps.resolve.outputs.updateType != 'none'
@@ -114,6 +128,8 @@ jobs:
           TARGET_MC: ${{ steps.resolve.outputs.targetMinecraft }}
           CURRENT_JDK: ${{ steps.resolve.outputs.currentJdk }}
           TARGET_JDK: ${{ steps.resolve.outputs.targetJdk }}
+          TARGET_GUAVA: ${{ steps.resolve.outputs.targetGuava }}
+          TARGET_GSON: ${{ steps.resolve.outputs.targetGson }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
           SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -143,9 +159,7 @@ jobs:
             labels=$'minecraft\nplatform-patch'
           fi
 
-          if [[ "$validated" == "false" ]]; then
-            labels="${labels}"$'\nvalidation-failed'
-          fi
+          echo "validated=${validated}" >> "$GITHUB_OUTPUT"
 
           {
             echo "## Paper \`${CURRENT_MC}\` -> \`${TARGET_MC}\`"
@@ -160,6 +174,8 @@ jobs:
             else
               echo "| Java toolchain | \`${TARGET_JDK}\` (unchanged) |"
             fi
+            [[ -n "$TARGET_GUAVA" ]] && echo "| Guava | \`${TARGET_GUAVA}\` (as declared by paper-api) |"
+            [[ -n "$TARGET_GSON" ]] && echo "| Gson | \`${TARGET_GSON}\` (as declared by paper-api) |"
             echo ""
             echo "### Validation"
             echo ""
@@ -171,6 +187,7 @@ jobs:
             echo ""
             echo "- the \`paper-api\` compile dependency"
             echo "- the Java toolchain, in Gradle and in every workflow's setup-java"
+            echo "- the forced Guava and Gson versions, read from what \`paper-api\` declares"
             echo "- \`runServer { minecraftVersion(...) }\` for local testing"
             echo "- \`api-version\` in \`paper-plugin.yml\`"
             echo "- the Paper build the smoke test boots"
@@ -204,6 +221,7 @@ jobs:
       # PR is the useful artifact for a platform jump — it shows exactly what
       # breaks — and it is labelled so it can never be mistaken for a clean one.
       - name: Open pull request
+        id: cpr
         if: steps.resolve.outputs.updateType != 'none'
         uses: peter-evans/create-pull-request@v7
         with:
@@ -223,3 +241,19 @@ jobs:
           body-path: pr-body.md
           labels: ${{ steps.pr.outputs.labels }}
           delete-branch: true
+
+      # Labels have to be reconciled, not just added. This job reuses one branch
+      # per target version, so a run that fails and is fixed on a later run would
+      # otherwise keep a `validation-failed` label that has become a lie.
+      - name: Reconcile the validation label
+        if: steps.resolve.outputs.updateType != 'none' && steps.cpr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN || github.token }}
+          PR: ${{ steps.cpr.outputs.pull-request-number }}
+          VALIDATED: ${{ steps.pr.outputs.validated }}
+        run: |
+          if [[ "$VALIDATED" == "true" ]]; then
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --remove-label validation-failed || true
+          else
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-label validation-failed
+          fi
