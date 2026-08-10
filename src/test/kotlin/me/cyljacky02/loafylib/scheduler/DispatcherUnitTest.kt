@@ -1,20 +1,25 @@
 package me.cyljacky02.loafylib.scheduler
 
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.runBlocking
-import org.bukkit.Location
 import org.bukkit.World
 import org.bukkit.entity.Entity
 import org.bukkit.plugin.Plugin
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Unit tests for dispatcher graceful degradation when plugin is disabled.
+ *
+ * Verifies the kotlinx.coroutines upstream dispatcher contract: when the scheduler
+ * rejects a task (plugin disabled), the Job is cancelled and the block is dispatched
+ * to [kotlinx.coroutines.Dispatchers.IO] as a fallback — never dropped.
+ * See `ExecutorCoroutineDispatcherImpl` and kotlinx.coroutines commit #2012.
  *
  * Note: This is a unit test (not property test) because there are only 4 finite
  * dispatcher types to test, and the behavior is deterministic.
@@ -23,107 +28,108 @@ class DispatcherUnitTest : FunSpec({
 
     context("Dispatcher graceful degradation on plugin disable") {
         
-        test("AsyncDispatcher runs task directly when plugin is disabled") {
+        test("AsyncDispatcher cancels job and dispatches to IO fallback when plugin is disabled") {
             val plugin = mockk<Plugin> {
                 every { isEnabled } returns false
+                every { name } returns "TestPlugin"
             }
             
             val dispatcher = AsyncDispatcher(plugin)
-            val executed = AtomicBoolean(false)
-            val executionThread = AtomicInteger(-1)
-            val testThread = Thread.currentThread().id
+            val executed = CountDownLatch(1)
             
             val runnable = Runnable {
-                executed.set(true)
-                executionThread.set(Thread.currentThread().id.toInt())
+                executed.countDown()
             }
             
-            // dispatch() should run directly on current thread
-            runBlocking {
-                dispatcher.dispatch(coroutineContext, runnable)
+            // dispatch() should cancel the job and dispatch to Dispatchers.IO
+            shouldThrow<java.util.concurrent.CancellationException> {
+                runBlocking {
+                    dispatcher.dispatch(coroutineContext, runnable)
+                }
             }
             
-            executed.get() shouldBe true
-            executionThread.get() shouldBe testThread.toInt()
+            // Block MUST be executed (on IO fallback) — dropping violates dispatcher contract
+            executed.await(1, TimeUnit.SECONDS) shouldBe true
         }
 
-        test("MainDispatcher runs task directly when plugin is disabled") {
+        test("MainDispatcher cancels job and dispatches to IO fallback when plugin is disabled") {
             val plugin = mockk<Plugin> {
                 every { isEnabled } returns false
+                every { name } returns "TestPlugin"
             }
             
             val dispatcher = MainDispatcher(plugin)
-            val executed = AtomicBoolean(false)
-            val executionThread = AtomicInteger(-1)
-            val testThread = Thread.currentThread().id
+            val executed = CountDownLatch(1)
             
             val runnable = Runnable {
-                executed.set(true)
-                executionThread.set(Thread.currentThread().id.toInt())
+                executed.countDown()
             }
             
-            runBlocking {
-                dispatcher.dispatch(coroutineContext, runnable)
+            shouldThrow<java.util.concurrent.CancellationException> {
+                runBlocking {
+                    dispatcher.dispatch(coroutineContext, runnable)
+                }
             }
             
-            executed.get() shouldBe true
-            executionThread.get() shouldBe testThread.toInt()
+            // Block MUST be executed (on IO fallback) — dropping violates dispatcher contract
+            executed.await(1, TimeUnit.SECONDS) shouldBe true
         }
 
-        test("EntityDispatcher runs task directly when plugin is disabled") {
+        test("EntityDispatcher cancels job and dispatches to IO fallback when plugin is disabled") {
             val plugin = mockk<Plugin> {
                 every { isEnabled } returns false
+                every { name } returns "TestPlugin"
             }
             val entity = mockk<Entity>()
             
             val dispatcher = EntityDispatcher(plugin, entity)
-            val executed = AtomicBoolean(false)
-            val executionThread = AtomicInteger(-1)
-            val testThread = Thread.currentThread().id
+            val executed = CountDownLatch(1)
             
             val runnable = Runnable {
-                executed.set(true)
-                executionThread.set(Thread.currentThread().id.toInt())
+                executed.countDown()
             }
             
-            runBlocking {
-                dispatcher.dispatch(coroutineContext, runnable)
+            shouldThrow<java.util.concurrent.CancellationException> {
+                runBlocking {
+                    dispatcher.dispatch(coroutineContext, runnable)
+                }
             }
             
-            executed.get() shouldBe true
-            executionThread.get() shouldBe testThread.toInt()
+            // Block MUST be executed (on IO fallback) — dropping violates dispatcher contract
+            executed.await(1, TimeUnit.SECONDS) shouldBe true
             
-            // Entity scheduler should NOT be called
+            // Entity scheduler should NOT be called when plugin is disabled
             verify(exactly = 0) { entity.scheduler }
         }
 
-        test("RegionDispatcher runs task directly when plugin is disabled") {
+        test("RegionDispatcher cancels job and dispatches to IO fallback when plugin is disabled") {
             val plugin = mockk<Plugin> {
                 every { isEnabled } returns false
+                every { name } returns "TestPlugin"
             }
             val world = mockk<World>()
             
             val dispatcher = RegionDispatcher(plugin, world, 0, 0)
-            val executed = AtomicBoolean(false)
-            val executionThread = AtomicInteger(-1)
-            val testThread = Thread.currentThread().id
+            val executed = CountDownLatch(1)
             
             val runnable = Runnable {
-                executed.set(true)
-                executionThread.set(Thread.currentThread().id.toInt())
+                executed.countDown()
             }
             
-            runBlocking {
-                dispatcher.dispatch(coroutineContext, runnable)
+            shouldThrow<java.util.concurrent.CancellationException> {
+                runBlocking {
+                    dispatcher.dispatch(coroutineContext, runnable)
+                }
             }
             
-            executed.get() shouldBe true
-            executionThread.get() shouldBe testThread.toInt()
+            // Block MUST be executed (on IO fallback) — dropping violates dispatcher contract
+            executed.await(1, TimeUnit.SECONDS) shouldBe true
         }
 
-        test("All dispatchers do not throw when plugin is disabled") {
+        test("All dispatchers cancel job and dispatch to IO fallback when plugin is disabled") {
             val plugin = mockk<Plugin> {
                 every { isEnabled } returns false
+                every { name } returns "TestPlugin"
             }
             val entity = mockk<Entity>()
             val world = mockk<World>()
@@ -135,18 +141,20 @@ class DispatcherUnitTest : FunSpec({
                 RegionDispatcher(plugin, world, 10, 20)
             )
             
-            var executionCount = 0
+            val executionLatch = CountDownLatch(dispatchers.size)
             
             dispatchers.forEach { dispatcher ->
-                runBlocking {
-                    dispatcher.dispatch(coroutineContext, Runnable {
-                        executionCount++
-                    })
+                shouldThrow<java.util.concurrent.CancellationException> {
+                    runBlocking {
+                        dispatcher.dispatch(coroutineContext, Runnable {
+                            executionLatch.countDown()
+                        })
+                    }
                 }
             }
             
-            // All 4 dispatchers should have executed their tasks
-            executionCount shouldBe 4
+            // ALL blocks must be executed (on IO fallback) — dropping violates dispatcher contract
+            executionLatch.await(2, TimeUnit.SECONDS) shouldBe true
         }
     }
 

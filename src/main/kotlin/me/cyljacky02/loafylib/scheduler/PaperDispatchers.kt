@@ -1,12 +1,19 @@
 package me.cyljacky02.loafylib.scheduler
 
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.World
 import org.bukkit.entity.Entity
 import org.bukkit.plugin.Plugin
+import java.lang.ref.WeakReference
+import java.util.Collections
+import java.util.WeakHashMap
 import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Paper scheduler-based coroutine dispatchers for Folia compatibility.
@@ -30,7 +37,14 @@ import kotlin.coroutines.CoroutineContext
  * - `player.playSound()` / `stopSound()`
  * - `player.showBossBar()` / `hideBossBar()`
  * - `player.spawnParticle()`
- * - `player.hasPermission()` / `getUniqueId()` / `getName()`
+ * - `player.getUniqueId()` / `getName()` (final fields on GameProfile)
+ *
+ * ### Safe from ANY thread (requires LuckPerms):
+ * - `player.hasPermission()` — LuckPerms replaces Bukkit's `PermissibleBase`
+ *   (LinkedHashMap, NOT thread-safe) with its thread-safe `LuckPermsPermissible`
+ *   (ConcurrentHashMap + AtomicBoolean). Without LP, `hasPermission()` is only
+ *   safe from the entity's owning thread.
+ *   Use [me.cyljacky02.loafylib.permission.PermissionAccess.isAvailable] to check.
  *
  * ### Requires entity's thread ([entity] dispatcher):
  * - `player.getLocation()` - live position
@@ -101,6 +115,11 @@ import kotlin.coroutines.CoroutineContext
  */
 object PaperDispatchers {
 
+    private val asyncDispatcherCache: MutableMap<Plugin, CoroutineDispatcher> =
+        Collections.synchronizedMap(WeakHashMap())
+    private val mainDispatcherCache: MutableMap<Plugin, CoroutineDispatcher> =
+        Collections.synchronizedMap(WeakHashMap())
+
     /**
      * Creates a dispatcher that executes coroutines asynchronously.
      *
@@ -116,7 +135,10 @@ object PaperDispatchers {
      * @param plugin The plugin instance
      * @return An async dispatcher
      */
-    fun async(plugin: Plugin): CoroutineDispatcher = AsyncDispatcher(plugin)
+    fun async(plugin: Plugin): CoroutineDispatcher =
+        synchronized(asyncDispatcherCache) {
+            asyncDispatcherCache.getOrPut(plugin) { AsyncDispatcher(plugin) }
+        }
 
     /**
      * Creates a dispatcher that executes on the global region thread.
@@ -135,7 +157,10 @@ object PaperDispatchers {
      * @param plugin The plugin instance
      * @return A global region dispatcher
      */
-    fun main(plugin: Plugin): CoroutineDispatcher = MainDispatcher(plugin)
+    fun main(plugin: Plugin): CoroutineDispatcher =
+        synchronized(mainDispatcherCache) {
+            mainDispatcherCache.getOrPut(plugin) { MainDispatcher(plugin) }
+        }
 
     /**
      * Creates a dispatcher that executes on the thread owning the entity.
@@ -152,7 +177,7 @@ object PaperDispatchers {
      * The dispatcher "follows" the entity - if it teleports to another region,
      * tasks execute on the new region's thread.
      *
-     * If the entity is removed before execution, tasks are silently dropped.
+     * If the entity is removed before execution, the coroutine is cancelled with [EntityRetiredException].
      *
      * @param plugin The plugin instance
      * @param entity The entity to bind execution to
@@ -206,20 +231,36 @@ object PaperDispatchers {
 /**
  * Dispatcher using Paper's AsyncScheduler.
  * Folia-compatible alternative to Dispatchers.IO.
- * 
- * Handles plugin disable gracefully by running tasks directly when the plugin
- * is no longer enabled, avoiding IllegalPluginAccessException during shutdown.
+ *
+ * Follows the kotlinx.coroutines upstream pattern for dispatcher shutdown
+ * (see `ExecutorCoroutineDispatcherImpl` and commit #2012):
+ * when the scheduler rejects a task (plugin disabled / scheduler shut down),
+ * the affected Job is cancelled and the task is re-dispatched to [Dispatchers.IO]
+ * so the coroutine can observe cancellation and clean up properly.
+ *
+ * **Why not just drop the block?**
+ * The [CoroutineDispatcher.dispatch] contract requires the block to eventually execute.
+ * Dropping it leaves the continuation permanently unresolved, which causes any
+ * `Job.join()` call on the coroutine to hang forever — a confirmed deadlock pattern.
  */
-internal class AsyncDispatcher(private val plugin: Plugin) : CoroutineDispatcher() {
+internal class AsyncDispatcher(plugin: Plugin) : CoroutineDispatcher() {
+
+    private val pluginRef = WeakReference(plugin)
 
     override fun dispatch(context: CoroutineContext, block: Runnable) {
-        // When plugin is disabled, Paper rejects new task scheduling.
-        // Run directly on current thread to allow coroutine cancellation to complete.
-        if (!plugin.isEnabled) {
-            block.run()
+        val plugin = pluginRef.get()
+
+        if (plugin?.isEnabled != true) {
+            context.cancel(CancellationException("Plugin ${plugin?.name ?: "unknown"} is disabled"))
+            Dispatchers.IO.dispatch(context, block)
             return
         }
-        Bukkit.getAsyncScheduler().runNow(plugin) { block.run() }
+        try {
+            Bukkit.getAsyncScheduler().runNow(plugin) { block.run() }
+        } catch (e: Exception) {
+            context.cancel(CancellationException("AsyncScheduler rejected task: ${e.message}", e))
+            Dispatchers.IO.dispatch(context, block)
+        }
     }
 
     override fun toString(): String = "PaperAsyncDispatcher"
@@ -232,18 +273,28 @@ internal class AsyncDispatcher(private val plugin: Plugin) : CoroutineDispatcher
  * - In Folia, Bukkit.isPrimaryThread() returns true for ANY tick thread
  * - This would cause incorrect behavior when called from a region tick thread
  * - GlobalRegionScheduler.execute() handles optimization internally
- * 
- * Handles plugin disable gracefully by running tasks directly when the plugin
- * is no longer enabled, avoiding IllegalPluginAccessException during shutdown.
+ *
+ * Follows the same [Dispatchers.IO] fallback pattern as [AsyncDispatcher].
+ * @see AsyncDispatcher
  */
-internal class MainDispatcher(private val plugin: Plugin) : CoroutineDispatcher() {
+internal class MainDispatcher(plugin: Plugin) : CoroutineDispatcher() {
+
+    private val pluginRef = WeakReference(plugin)
 
     override fun dispatch(context: CoroutineContext, block: Runnable) {
-        if (!plugin.isEnabled) {
-            block.run()
+        val plugin = pluginRef.get()
+
+        if (plugin?.isEnabled != true) {
+            context.cancel(CancellationException("Plugin ${plugin?.name ?: "unknown"} is disabled"))
+            Dispatchers.IO.dispatch(context, block)
             return
         }
-        Bukkit.getGlobalRegionScheduler().execute(plugin, block)
+        try {
+            Bukkit.getGlobalRegionScheduler().execute(plugin, block)
+        } catch (e: Exception) {
+            context.cancel(CancellationException("GlobalRegionScheduler rejected task: ${e.message}", e))
+            Dispatchers.IO.dispatch(context, block)
+        }
     }
 
     override fun toString(): String = "PaperMainDispatcher"
@@ -253,22 +304,36 @@ internal class MainDispatcher(private val plugin: Plugin) : CoroutineDispatcher(
  * Dispatcher using Paper's EntityScheduler.
  * Essential for Folia where entities can be in different regions.
  *
- * If the entity is removed before execution, the task is silently dropped.
- * Handles plugin disable gracefully by running tasks directly when the plugin
- * is no longer enabled, avoiding IllegalPluginAccessException during shutdown.
+ * If the entity is removed before execution, the coroutine is cancelled with [EntityRetiredException].
+ *
+ * Follows the same [Dispatchers.IO] fallback pattern as [AsyncDispatcher].
+ * @see AsyncDispatcher
  */
 internal class EntityDispatcher(
-    private val plugin: Plugin,
+    plugin: Plugin,
     private val entity: Entity
 ) : CoroutineDispatcher() {
 
+    private val pluginRef = WeakReference(plugin)
+
     override fun dispatch(context: CoroutineContext, block: Runnable) {
-        if (!plugin.isEnabled) {
-            block.run()
+        val plugin = pluginRef.get()
+
+        if (plugin?.isEnabled != true) {
+            context.cancel(CancellationException("Plugin ${plugin?.name ?: "unknown"} is disabled"))
+            Dispatchers.IO.dispatch(context, block)
             return
         }
-        // retired callback is null - silently drop if entity is gone
-        entity.scheduler.run(plugin, { block.run() }, null)
+        try {
+            entity.scheduler.run(
+                plugin,
+                { _ -> block.run() },
+                { context[Job]?.cancel(EntityRetiredException()) }
+            )
+        } catch (e: Exception) {
+            context.cancel(CancellationException("EntityScheduler rejected task: ${e.message}", e))
+            Dispatchers.IO.dispatch(context, block)
+        }
     }
 
     override fun toString(): String = "PaperEntityDispatcher(${entity.uniqueId})"
@@ -277,23 +342,33 @@ internal class EntityDispatcher(
 /**
  * Dispatcher using Paper's RegionScheduler.
  * Location-bound, does not follow entities.
- * 
- * Handles plugin disable gracefully by running tasks directly when the plugin
- * is no longer enabled, avoiding IllegalPluginAccessException during shutdown.
+ *
+ * Follows the same [Dispatchers.IO] fallback pattern as [AsyncDispatcher].
+ * @see AsyncDispatcher
  */
 internal class RegionDispatcher(
-    private val plugin: Plugin,
+    plugin: Plugin,
     private val world: World,
     private val chunkX: Int,
     private val chunkZ: Int
 ) : CoroutineDispatcher() {
 
+    private val pluginRef = WeakReference(plugin)
+
     override fun dispatch(context: CoroutineContext, block: Runnable) {
-        if (!plugin.isEnabled) {
-            block.run()
+        val plugin = pluginRef.get()
+
+        if (plugin?.isEnabled != true) {
+            context.cancel(CancellationException("Plugin ${plugin?.name ?: "unknown"} is disabled"))
+            Dispatchers.IO.dispatch(context, block)
             return
         }
-        Bukkit.getRegionScheduler().execute(plugin, world, chunkX, chunkZ, block)
+        try {
+            Bukkit.getRegionScheduler().execute(plugin, world, chunkX, chunkZ, block)
+        } catch (e: Exception) {
+            context.cancel(CancellationException("RegionScheduler rejected task: ${e.message}", e))
+            Dispatchers.IO.dispatch(context, block)
+        }
     }
 
     override fun toString(): String = "PaperRegionDispatcher(${world.name}, $chunkX, $chunkZ)"

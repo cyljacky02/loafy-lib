@@ -49,8 +49,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * 3. **Better coroutine integration** - Native dispatcher, no wrapper overhead
  * 4. **Folia-safe** - Async work doesn't touch game state anyway
  *
- * For plugin-bound async tasks with better profiling/debugging in Paper's
- * timings, use [Plugin.asyncDispatcher] extension property instead.
+ * For plugin-bound async tasks that should cancel when the plugin is disabled,
+ * use [Plugin.asyncDispatcher] extension property instead.
  */
 val asyncDispatcher: CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO
 
@@ -63,10 +63,10 @@ val asyncDispatcher: CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO
  *
  * ```kotlin
  * class MyPlugin : JavaPlugin() {
- *     val pluginScope by lazy { createPluginScope() }
+ *     val pluginScope by lazy { this.createPluginScope() }
  *
  *     override fun onDisable() {
- *         pluginScope.cancel()
+ *         pluginScope.cancelGracefully()
  *     }
  * }
  * ```
@@ -101,6 +101,13 @@ val asyncDispatcher: CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO
  *         Bukkit.broadcastMessage("Server message!")
  *     }
  * }
+ *
+ * // Async operation using Paper's AsyncScheduler
+ * pluginScope.launch {
+ *     plugin.withAsyncContext {
+ *         val result = doAsyncWork()
+ *     }
+ * }
  * ```
  *
  * @see PaperDispatchers for detailed thread safety documentation
@@ -113,7 +120,11 @@ val asyncDispatcher: CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO
 /**
  * Gets an async dispatcher using Paper's AsyncScheduler.
  *
- * Use instead of `Dispatchers.IO` for Folia compatibility.
+ * Unlike the top-level [asyncDispatcher], this dispatcher:
+ * - Cancels jobs when the plugin is disabled (graceful shutdown)
+ * - Is bound to the plugin's lifecycle
+ *
+ * Both are Folia-compatible since async operations don't touch game state.
  */
 val Plugin.asyncDispatcher: CoroutineDispatcher
     get() = PaperDispatchers.async(this)
@@ -172,13 +183,13 @@ fun Plugin.regionDispatcher(location: Location): CoroutineDispatcher =
  * Features:
  * - **SupervisorJob**: Child coroutines can fail independently without cancelling siblings
  * - **Exception Handler**: Logs uncaught exceptions to the plugin's logger (except CancellationException)
- * - **Async Dispatcher**: Uses Dispatchers.IO for background work
+ * - **Async Dispatcher**: Uses Paper's AsyncScheduler via [Plugin.asyncDispatcher]
  *
  * This scope should be cancelled in onDisable() using [cancelPluginScope].
  *
  * ```kotlin
  * class MyPlugin : JavaPlugin() {
- *     val pluginScope by lazy { createPluginScope() }
+ *     val pluginScope by lazy { this.createPluginScope() }
  *
  *     override fun onDisable() {
  *         cancelPluginScope(pluginScope)
@@ -200,7 +211,7 @@ fun Plugin.createPluginScope(): CoroutineScope {
         }
     }
 
-    return CoroutineScope(exceptionHandler + SupervisorJob() + asyncDispatcher)
+    return CoroutineScope(exceptionHandler + SupervisorJob() + this.asyncDispatcher)
 }
 
 /**
@@ -236,7 +247,7 @@ fun createPluginScope(): CoroutineScope {
  *
  * ```kotlin
  * class MyPlugin : JavaPlugin() {
- *     val pluginScope by lazy { createPluginScope() }
+ *     val pluginScope by lazy { this.createPluginScope() }
  *
  *     override fun onDisable() {
  *         cancelPluginScope(pluginScope)
@@ -304,7 +315,7 @@ suspend inline fun <T> Plugin.withMainContext(
  */
 suspend inline fun <T> Plugin.withAsyncContext(
     crossinline block: suspend CoroutineScope.() -> T
-): T = withContext(asyncDispatcher) { block() }
+): T = withContext(this.asyncDispatcher) { block() }
 
 /**
  * Executes a block on the entity's owning thread.
