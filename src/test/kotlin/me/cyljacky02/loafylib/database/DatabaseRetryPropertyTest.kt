@@ -17,6 +17,8 @@ import java.util.logging.Logger
 
 /**
  * Property-based tests for database retry logic.
+ * Tests the shared retry behavior in [AbstractDatabaseManager] used by both
+ * [MariaDbDatabaseManager] and [SqliteDatabaseManager].
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class DatabaseRetryPropertyTest : FunSpec({
@@ -31,7 +33,7 @@ class DatabaseRetryPropertyTest : FunSpec({
         test("Transient errors retry with exponential backoff delays") {
             runTest {
                 val config = DatabaseConfig()
-                val manager = TestableHikariDatabaseManager(config, silentLogger)
+                val manager = TestableDatabaseManager(config, silentLogger)
                 
                 var attemptCount = 0
                 val attemptTimes = mutableListOf<Long>()
@@ -68,7 +70,7 @@ class DatabaseRetryPropertyTest : FunSpec({
         test("Retry delay caps at 16 seconds") {
             runTest {
                 val config = DatabaseConfig()
-                val manager = TestableHikariDatabaseManager(config, silentLogger)
+                val manager = TestableDatabaseManager(config, silentLogger)
                 
                 val attemptTimes = mutableListOf<Long>()
                 
@@ -95,7 +97,7 @@ class DatabaseRetryPropertyTest : FunSpec({
         test("Successful operation after transient failures returns result") {
             runTest {
                 val config = DatabaseConfig()
-                val manager = TestableHikariDatabaseManager(config, silentLogger)
+                val manager = TestableDatabaseManager(config, silentLogger)
                 
                 var attemptCount = 0
                 
@@ -113,12 +115,12 @@ class DatabaseRetryPropertyTest : FunSpec({
         }
     }
 
-    context("Constraint violations never retry") {
+    context("MariaDB constraint violations never retry") {
         
         test("Duplicate entry error (1062) throws immediately without retry") {
             runTest {
                 val config = DatabaseConfig()
-                val manager = TestableHikariDatabaseManager(config, silentLogger)
+                val manager = TestableDatabaseManager(config, silentLogger)
                 
                 var attemptCount = 0
                 
@@ -137,7 +139,7 @@ class DatabaseRetryPropertyTest : FunSpec({
         test("Foreign key constraint error (1452) throws immediately without retry") {
             runTest {
                 val config = DatabaseConfig()
-                val manager = TestableHikariDatabaseManager(config, silentLogger)
+                val manager = TestableDatabaseManager(config, silentLogger)
                 
                 var attemptCount = 0
                 
@@ -155,12 +157,12 @@ class DatabaseRetryPropertyTest : FunSpec({
 
         test("Non-constraint error codes are retried") {
             checkAll(100, Arb.int(0..2000)) { errorCode ->
-                // Skip constraint violation codes
-                if (errorCode == 1062 || errorCode == 1452) return@checkAll
+                // Skip constraint violation codes (MariaDB: 1062, 1452; SQLite: 19)
+                if (errorCode == 1062 || errorCode == 1452 || errorCode == 19) return@checkAll
                 
                 runTest {
                     val config = DatabaseConfig()
-                    val manager = TestableHikariDatabaseManager(config, silentLogger)
+                    val manager = TestableDatabaseManager(config, silentLogger)
                     
                     var attemptCount = 0
                     
@@ -180,7 +182,7 @@ class DatabaseRetryPropertyTest : FunSpec({
         test("Constraint violation by message (Duplicate entry) throws immediately") {
             runTest {
                 val config = DatabaseConfig()
-                val manager = TestableHikariDatabaseManager(config, silentLogger)
+                val manager = TestableDatabaseManager(config, silentLogger)
                 
                 var attemptCount = 0
                 
@@ -199,7 +201,7 @@ class DatabaseRetryPropertyTest : FunSpec({
         test("Constraint violation by message (foreign key constraint) throws immediately") {
             runTest {
                 val config = DatabaseConfig()
-                val manager = TestableHikariDatabaseManager(config, silentLogger)
+                val manager = TestableDatabaseManager(config, silentLogger)
                 
                 var attemptCount = 0
                 
@@ -215,21 +217,82 @@ class DatabaseRetryPropertyTest : FunSpec({
             }
         }
     }
+
+    context("SQLite constraint violations never retry") {
+
+        test("SQLite CONSTRAINT error (19) throws immediately without retry") {
+            runTest {
+                val config = DatabaseConfig()
+                val manager = TestableDatabaseManager(config, silentLogger)
+
+                var attemptCount = 0
+
+                val exception = shouldThrow<SQLException> {
+                    manager.withRetry(5) {
+                        attemptCount++
+                        throw SQLException("SQLITE_CONSTRAINT", "23000", 19)
+                    }
+                }
+
+                attemptCount shouldBe 1
+                exception.errorCode shouldBe 19
+            }
+        }
+
+        test("SQLite UNIQUE constraint failed message throws immediately") {
+            runTest {
+                val config = DatabaseConfig()
+                val manager = TestableDatabaseManager(config, silentLogger)
+
+                var attemptCount = 0
+
+                shouldThrow<SQLException> {
+                    manager.withRetry(5) {
+                        attemptCount++
+                        throw SQLException("UNIQUE constraint failed: users.email", "23000", 0)
+                    }
+                }
+
+                attemptCount shouldBe 1
+            }
+        }
+
+        test("SQLite FOREIGN KEY constraint failed message throws immediately") {
+            runTest {
+                val config = DatabaseConfig()
+                val manager = TestableDatabaseManager(config, silentLogger)
+
+                var attemptCount = 0
+
+                shouldThrow<SQLException> {
+                    manager.withRetry(5) {
+                        attemptCount++
+                        throw SQLException("FOREIGN KEY constraint failed", "23000", 0)
+                    }
+                }
+
+                attemptCount shouldBe 1
+            }
+        }
+    }
 })
 
 /**
- * Testable version of HikariDatabaseManager that doesn't require actual database connection.
- * Only exposes the withRetry logic for testing.
+ * Testable version of AbstractDatabaseManager that doesn't require actual database connection.
+ * Only exposes the withRetry logic for testing both MariaDB and SQLite constraint handling.
  */
-private class TestableHikariDatabaseManager(
+private class TestableDatabaseManager(
     private val config: DatabaseConfig,
     private val logger: Logger
 ) {
     companion object {
         private const val INITIAL_RETRY_DELAY_MS = 1000L
         private const val MAX_RETRY_DELAY_MS = 16000L
+        // MariaDB error codes
         private const val ERROR_DUPLICATE_ENTRY = 1062
         private const val ERROR_FOREIGN_KEY_CONSTRAINT = 1452
+        // SQLite error code
+        private const val SQLITE_CONSTRAINT = 19
     }
 
     suspend fun <T> withRetry(maxRetries: Int = 5, operation: suspend () -> T): T {
@@ -264,7 +327,10 @@ private class TestableHikariDatabaseManager(
     private fun isConstraintViolation(e: SQLException): Boolean {
         return e.errorCode == ERROR_DUPLICATE_ENTRY ||
                 e.errorCode == ERROR_FOREIGN_KEY_CONSTRAINT ||
+                e.errorCode == SQLITE_CONSTRAINT ||
                 e.message?.contains("Duplicate entry", ignoreCase = true) == true ||
-                e.message?.contains("foreign key constraint", ignoreCase = true) == true
+                e.message?.contains("foreign key constraint", ignoreCase = true) == true ||
+                e.message?.contains("UNIQUE constraint failed", ignoreCase = true) == true ||
+                e.message?.contains("FOREIGN KEY constraint failed", ignoreCase = true) == true
     }
 }
