@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/cyljacky02/loafy-lib/compare/v1.2.0...v1.2.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **deps:** support Paper 26.2 in InvUI and PacketEvents ([#7](https://github.com/cyljacky02/loafy-lib/issues/7)) ([47baacc](https://github.com/cyljacky02/loafy-lib/commit/47baacc401f6d07938db021d3eabdc2b60f347c4))
+
 ## [1.2.0](https://github.com/cyljacky02/loafy-lib/compare/v1.1.0...v1.2.0) (2026-08-10)
 
 
