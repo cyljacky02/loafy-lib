@@ -34,7 +34,7 @@ pluginScope.launch {
 - **Suspend Event Handlers** - Use suspend functions in `@EventHandler` methods
 - **Per-Player Glowing Entities** - PacketEvents-based glowing with team colors (16), RGB Display entities (unlimited), or invisible Shulker markers (pure glow outline)
 - **Per-Block Persistent Data** - Store custom data on individual blocks using chunk PDC storage
-- **Protection Hook** - Unified API for checking build permissions with WorldGuard and Lands integration
+- **Protection Hook** - Unified API for checking build permissions with WorldGuard, Lands, Residence and GriefPrevention integration
 - **Utility Extensions** - Kotlin-idiomatic helpers for ItemStack, Components, and MiniMessage
 - **PDC Extensions** - Unified marker system for Items, Entities, and Chunks with type-safe helpers
 - **Safe Location Utilities** - Folia-compatible safe teleport location detection with hazard checking and nearby search
@@ -737,7 +737,7 @@ if (glowingService.isAvailable()) {
 
 ### Protection Hook
 
-Unified API for checking build/break permissions with WorldGuard and Lands integration:
+Unified API for checking build/break permissions with WorldGuard, Lands, Residence and GriefPrevention integration:
 
 ```kotlin
 import me.cyljacky02.loafylib.protection.*
@@ -782,13 +782,17 @@ pluginScope.launch {
 **Supported Plugins:**
 - **WorldGuard** - Region-based protection (checks `BLOCK_PLACE` / `BLOCK_BREAK` flags)
 - **Lands** - Land claim protection (checks `BLOCK_PLACE` / `BLOCK_BREAK` role flags)
+- **Residence** - Residence-based protection (delegates to `ResidenceBlockListener.canPlaceBlock` / `canBreakBlock`)
+- **GriefPrevention** - Claim-based protection (delegates to `Claim.checkPermission`)
+
+Detection is automatic: each integration is enabled only when its plugin is present on the server, and the API classes are loaded lazily so a missing plugin cannot raise `NoClassDefFoundError`.
 
 **Thread Safety:** Must be called from entity/region thread (Folia) or main thread (Paper). WorldGuard requires main thread access for SessionManager.
 
 **Behavior:**
 - Returns `true` if no protection plugins are installed (graceful degradation)
 - When multiple plugins are installed, ALL must allow for the action to return `true`
-- Wilderness (unclaimed areas in Lands) allows building/breaking by default
+- Wilderness (unclaimed areas) is delegated to each plugin's own rules — Lands allows building by default, while Residence uses world flags and GriefPrevention follows the world's `ClaimsMode` (e.g. Creative mode denies building outside claims)
 
 
 ### Safe Location Utilities
@@ -958,15 +962,20 @@ tasks.shadowJar {
 | Dependency | Purpose | Notes |
 |------------|---------|-------|
 | [PacketEvents](https://github.com/retrooper/packetevents) | GlowingService | Enables per-player glowing entities. Without it, GlowingService gracefully degrades to no-ops. |
-| [WorldGuard](https://github.com/EngineHub/WorldGuard) | ProtectionChecker | Enables region-based build permission checks. |
-| [Lands](https://github.com/IncrediblePlugins/LandsAPI) | ProtectionChecker | Enables land claim build permission checks. |
+| [WorldGuard](https://github.com/EngineHub/WorldGuard) | ProtectionHook | Enables region-based build permission checks. |
+| [Lands](https://github.com/angeschossen/LandsAPI) | ProtectionHook | Enables land claim build permission checks. |
+| [Residence](https://github.com/Zrips/Residence) | ProtectionHook | Enables residence-based build permission checks. |
+| [GriefPrevention](https://github.com/GriefPrevention/GriefPrevention) | ProtectionHook | Enables claim-based build permission checks. |
+| [LuckPerms](https://github.com/LuckPerms/LuckPerms) | PermissionAccess | Makes `Player.hasPermission()` safe from any thread. Without it, permission checks must run on the entity thread. |
 
 ## Library Loader Dependencies
 
 These are loaded via Paper's library loader (available at runtime):
 
-- Kotlin stdlib 2.2.21
+- Kotlin stdlib 2.3.10
+- kotlin-reflect 2.3.10
 - kotlinx-coroutines-core 1.10.2
+- kotlinx-serialization 1.10.0
 - HikariCP 7.0.2
 - MariaDB JDBC 3.5.7
 - SQLite JDBC 3.47.2.0
