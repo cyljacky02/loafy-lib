@@ -193,6 +193,11 @@ jobs:
         if: steps.resolve.outputs.updateType != 'none'
         uses: peter-evans/create-pull-request@v7
         with:
+          # Same reason as release.yml: a pull request opened with GITHUB_TOKEN
+          # gets no CI, so the required check never reports. Validation above
+          # still runs either way -- this only decides whether the pull request
+          # itself also carries a green check.
+          token: ${{ secrets.AUTOMATION_TOKEN || github.token }}
           branch: minecraft/paper-${{ steps.resolve.outputs.targetMinecraft }}
           base: main
           add-paths: gradle/libs.versions.toml

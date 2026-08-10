@@ -44,6 +44,14 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          # Pull requests opened with GITHUB_TOKEN do not trigger workflow runs,
+          # so the required "Build and verify" check never reports and branch
+          # protection blocks the release pull request indefinitely. A personal
+          # access token is a distinct identity, so its pull requests get CI
+          # normally. Falls back to GITHUB_TOKEN when the secret is absent, in
+          # which case each release pull request needs its workflow run approved
+          # by hand before it can merge.
+          token: ${{ secrets.AUTOMATION_TOKEN || github.token }}
 
   publish:
     name: Build and publish the jar
