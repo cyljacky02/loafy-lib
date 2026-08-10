@@ -7,12 +7,32 @@ description: Shared library plugin providing common infrastructure for Loafy plu
 author: cyljacky02
 website: ''
 
-# Optional soft dependency for glowing entity support
+# Optional soft dependencies
 dependencies:
   server:
     packetevents:
       load: BEFORE
       required: false
+    WorldGuard:
+      load: BEFORE
+      required: false
+    Lands:
+      load: BEFORE
+      required: false
+    LuckPerms:
+      load: BEFORE
+      required: false
+    # Force LoafyLib to load BEFORE Nexo. Without this, Nexo may load first
+    # on servers with many plugins, causing its BytecodeModifyingURLClassLoader
+    # to provide Kotlin stdlib classes to the PluginClassLoaderGroup before
+    # LoafyLib's. This results in a LinkageError (loader constraint violation)
+    # for dependent plugins like LoafyDrops that join both classpaths, because
+    # LoafyLib's code resolves Kotlin from its own library loader while the
+    # group resolves Kotlin from Nexo's (different defining classloader).
+    Nexo:
+      load: AFTER
+      required: false
+      join-classpath: false
 
 # Dependent plugins should declare:
 #   dependencies:
