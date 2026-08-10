@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/cyljacky02/loafy-lib/compare/v1.1.0...v1.2.0) (2026-08-10)
+
+
+### Features
+
+* **platform:** target Paper 26.2 on Java 25 ([#5](https://github.com/cyljacky02/loafy-lib/issues/5)) ([12860fe](https://github.com/cyljacky02/loafy-lib/commit/12860fe6ff5ea0a3655ee39c85ce3c4ed79f2fe7))
+
 ## [1.1.0](https://github.com/cyljacky02/loafy-lib/compare/v1.0.0...v1.1.0) (2026-08-10)
 
 
