@@ -1,8 +1,9 @@
 package me.cyljacky02.loafylib.util
 
 import com.destroystokyo.paper.profile.ProfileProperty
+import io.papermc.paper.datacomponent.DataComponentTypes
+import io.papermc.paper.datacomponent.item.ResolvableProfile
 import net.kyori.adventure.text.Component
-import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.NamespacedKey
 import org.bukkit.OfflinePlayer
@@ -102,12 +103,12 @@ fun ItemMeta.loreLines(lines: List<Component>) {
  */
 fun playerHead(base64: String): ItemStack {
     val stack = ItemStack(Material.PLAYER_HEAD)
-    stack.editMeta(SkullMeta::class.java) { meta ->
-        val hashId = UUID(base64.hashCode().toLong(), base64.hashCode().toLong())
-        val profile = Bukkit.createProfile(hashId, "")
-        profile.setProperty(ProfileProperty("textures", base64))
-        meta.playerProfile = profile
-    }
+    val hashId = UUID(base64.hashCode().toLong(), base64.hashCode().toLong())
+    val profile = ResolvableProfile.resolvableProfile()
+        .uuid(hashId)
+        .addProperty(ProfileProperty("textures", base64))
+        .build()
+    stack.setData(DataComponentTypes.PROFILE, profile)
     return stack
 }
 
@@ -120,9 +121,7 @@ fun playerHead(base64: String): ItemStack {
  */
 fun playerHead(player: OfflinePlayer): ItemStack {
     val stack = ItemStack(Material.PLAYER_HEAD)
-    stack.editMeta(SkullMeta::class.java) { meta ->
-        meta.playerProfile = player.playerProfile
-    }
+    stack.setData(DataComponentTypes.PROFILE, ResolvableProfile.resolvableProfile(player.playerProfile))
     return stack
 }
 
@@ -136,9 +135,10 @@ fun playerHead(player: OfflinePlayer): ItemStack {
  */
 fun playerHead(uuid: UUID): ItemStack {
     val stack = ItemStack(Material.PLAYER_HEAD)
-    stack.editMeta(SkullMeta::class.java) { meta ->
-        meta.playerProfile = Bukkit.createProfile(uuid)
-    }
+    val profile = ResolvableProfile.resolvableProfile()
+        .uuid(uuid)
+        .build()
+    stack.setData(DataComponentTypes.PROFILE, profile)
     return stack
 }
 
