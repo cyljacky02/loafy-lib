@@ -1,13 +1,15 @@
 package me.cyljacky02.loafylib.location
 
+import org.bukkit.Bukkit
 import org.bukkit.HeightMap
 import org.bukkit.Location
+import org.bukkit.NamespacedKey
 import org.bukkit.World
 import java.util.concurrent.CompletableFuture
 
 /**
  * Utility object for finding safe locations near a given origin.
- *
+
  * Implements search patterns sorted by distance from origin:
  * - **ALTERNATING**: Checks origin Y first, then alternates up/down (0, 1, -1, 2, -2, ...)
  * - **MIDDLE_OUT**: Starts from middle of Y range, optimal for cave environments like Nether
@@ -23,22 +25,20 @@ import java.util.concurrent.CompletableFuture
  * - Safe to call from any thread
  * - Uses `getChunkAtAsync()` to load the origin chunk before searching
  *
- * ## Multi-Chunk Search Considerations (Folia-Critical)
+ * ## Multi-Chunk Search Safety (Folia-Compatible)
  *
- * **Important**: Large search radii (>16 blocks) may span multiple chunks.
+ * The synchronous [findNearest] method uses `Bukkit.isOwnedByCurrentRegion()` to validate
+ * that the current thread owns all chunks within the search radius before proceeding.
  *
- * - The async method ([findNearestAsync]) only loads the **origin chunk** before searching
- * - If the search extends into neighboring chunks:
- *   - **Folia**: Will cause `IllegalStateException` if accessing blocks owned by a different
- *     region thread. Folia enforces strict thread context checks via `TickThread.isTickThreadFor()`.
- *     Regions tick in parallel and do NOT share data - cross-region access causes data corruption.
- *   - **Paper**: May trigger synchronous chunk loading (performance impact)
+ * - **Paper**: Check returns `isPrimaryThread()` - passes if on main thread
+ * - **Folia**: Check validates actual region ownership via `TickThread.isTickThreadFor()`
  *
- * **Recommendations for large radii**:
- * - Keep `radiusXZ` ≤ 16 for predictable single-chunk behavior
- * - For larger searches on Folia, use `RegionScheduler` to ensure correct thread context
- * - Consider pre-loading relevant chunks or implementing chunk-aware search at plugin level
- * - The default radius (3 blocks) is safe for single-chunk operations
+ * If the validation fails, an `IllegalArgumentException` is thrown with a helpful message
+ * suggesting to use [findNearestAsync] or reduce the search radius.
+ *
+ * The async method ([findNearestAsync]) only loads the **origin chunk** before searching,
+ * so for large radii on Folia, ensure all relevant chunks are in the same region or
+ * use `RegionScheduler` at the plugin level.
  *
  * ## Nether-Specific Behavior
  *
@@ -52,6 +52,8 @@ import java.util.concurrent.CompletableFuture
  * @see SearchProfile for search strategy options
  */
 object SafeLocationSearch {
+
+    private val EMPTY_FLUID_KEY = NamespacedKey.minecraft("empty")
 
     /** Maximum search radius for pre-computed spiral pattern */
     private const val MAX_RADIUS = 16
@@ -166,6 +168,18 @@ object SafeLocationSearch {
         val originZ = origin.blockZ
         val minHeight = world.minHeight
 
+        // Folia safety check: verify current thread owns all chunks in search radius
+        // On Paper, this simply returns isPrimaryThread(); on Folia, it validates region ownership
+        val chunkRadiusSquare = (radiusXZ + 15) shr 4 // Ceiling division to chunks
+        if (chunkRadiusSquare > 0) {
+            val originChunkX = originX shr 4
+            val originChunkZ = originZ shr 4
+            require(Bukkit.isOwnedByCurrentRegion(world, originChunkX, originChunkZ, chunkRadiusSquare)) {
+                "SafeLocationSearch.findNearest must be called from the thread owning all chunks in search radius. " +
+                "radiusXZ=$radiusXZ spans $chunkRadiusSquare chunk(s). Use findNearestAsync or reduce radius."
+            }
+        }
+
         // Resolve profile and get effective bounds
         val resolvedProfile = SearchProfile.resolve(profile, world)
         val effectiveMaxY = SearchProfile.getEffectiveMaxY(world, profile)
@@ -189,6 +203,9 @@ object SafeLocationSearch {
             }
         }
 
+        // Reusable location object to avoid allocations in hot loop
+        val checkLocation = Location(world, 0.0, 0.0, 0.0)
+
         // Iterate spiral pattern within radiusXZ
         for (offset in SPIRAL_PATTERN) {
             val dx = offset[0]
@@ -202,8 +219,10 @@ object SafeLocationSearch {
 
             // Iterate pre-computed vertical coordinates
             for (checkY in verticalYCoordinates) {
-                // Create location for safety check
-                val checkLocation = Location(world, checkX.toDouble(), checkY.toDouble(), checkZ.toDouble())
+                // Reuse location object for safety check
+                checkLocation.x = checkX.toDouble()
+                checkLocation.y = checkY.toDouble()
+                checkLocation.z = checkZ.toDouble()
 
                 if (SafeLocation.isSafe(checkLocation, options)) {
                     // Center on block (x+0.5, z+0.5) and preserve original yaw and pitch
@@ -236,13 +255,13 @@ object SafeLocationSearch {
      * - **Folia**: Callback runs on the region thread that owns the origin chunk
      * - **Paper**: Callback runs on the main server thread (always synchronously)
      *
-     * ## Multi-Chunk Limitation (Folia-Critical)
+     * ## Multi-Chunk Safety (Folia-Compatible)
      *
-     * **Important**: This method only loads the **origin chunk** before searching.
+     * This method only loads the **origin chunk** before searching. However, the underlying
+     * [findNearest] call validates region ownership via `Bukkit.isOwnedByCurrentRegion()`.
      *
-     * If `radiusXZ` > 16, the search may extend into neighboring chunks. On Folia, this will
-     * cause `IllegalStateException` if those chunks are owned by a different region thread.
-     * Folia's `TickThread.isTickThreadFor()` enforces strict region ownership.
+     * If the search radius spans chunks not owned by the callback's thread, an
+     * `IllegalArgumentException` is thrown with a helpful message.
      *
      * For large search radii on Folia, consider:
      * - Using `RegionScheduler` to schedule tasks on the correct region threads
@@ -334,6 +353,13 @@ object SafeLocationSearch {
             val surfaceLocation = getSurfaceLocation(world, x, z)
                 ?: return@thenApply null // No surface (End void)
 
+            if (!options.allowWater) {
+                val surfaceFluidKey = world.getFluidData(x, surfaceLocation.blockY, z).fluidType.key
+                if (surfaceFluidKey != EMPTY_FLUID_KEY) {
+                    return@thenApply null
+                }
+            }
+
             // Search for safe location near surface (already on correct thread)
             val profile = if (world.environment == World.Environment.NETHER) {
                 SearchProfile.MIDDLE_OUT
@@ -342,6 +368,23 @@ object SafeLocationSearch {
             }
             findNearest(surfaceLocation, radiusXZ, radiusY, options, profile)
         }
+    }
+
+    @JvmStatic
+    @JvmOverloads
+    fun findSafeSurfaceAsync(
+        world: World,
+        x: Int,
+        z: Int,
+        radiusXZ: Int = 3,
+        radiusY: Int = 5,
+        options: SafetyOptions = SafetyOptions.DEFAULT,
+        validator: (Location) -> Boolean
+    ): CompletableFuture<Location?> {
+        return findSafeSurfaceAsync(world, x, z, radiusXZ, radiusY, options)
+            .thenApply { location ->
+                if (location != null && validator(location)) location else null
+            }
     }
 
     /**
@@ -364,7 +407,7 @@ object SafeLocationSearch {
             }
             World.Environment.THE_END -> {
                 // End can have void - check if there's actually a surface
-                val surfaceY = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING)
+                val surfaceY = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES)
                 if (surfaceY <= world.minHeight) {
                     null  // No surface (void)
                 } else {
@@ -373,7 +416,7 @@ object SafeLocationSearch {
             }
             else -> {
                 // Overworld: Use MOTION_BLOCKING for water surface or solid ground
-                val surfaceY = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING)
+                val surfaceY = world.getHighestBlockYAt(x, z, HeightMap.MOTION_BLOCKING_NO_LEAVES)
                 Location(world, x + 0.5, surfaceY.toDouble(), z + 0.5)
             }
         }

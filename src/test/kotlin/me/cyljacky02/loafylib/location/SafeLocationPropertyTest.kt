@@ -8,8 +8,10 @@ import io.kotest.property.arbitrary.*
 import io.kotest.property.checkAll
 import io.mockk.every
 import io.mockk.mockk
+import io.papermc.paper.block.fluid.FluidData
 import org.bukkit.Location
 import org.bukkit.Material
+import org.bukkit.NamespacedKey
 import org.bukkit.World
 import org.bukkit.WorldBorder
 import org.bukkit.block.Block
@@ -37,6 +39,10 @@ class SafeLocationPropertyTest : FunSpec({
      * Creates a mock world with standard bounds.
      */
     fun createMockWorld(minHeight: Int = -64, maxHeight: Int = 320): World {
+        val emptyFluid = mockk<org.bukkit.Fluid> {
+            every { key } returns NamespacedKey.minecraft("empty")
+        }
+
         val worldBorder = mockk<WorldBorder> {
             every { isInside(any<Location>()) } returns true
         }
@@ -44,6 +50,9 @@ class SafeLocationPropertyTest : FunSpec({
             every { this@mockk.minHeight } returns minHeight
             every { this@mockk.maxHeight } returns maxHeight
             every { this@mockk.worldBorder } returns worldBorder
+            every { this@mockk.getFluidData(any<Int>(), any<Int>(), any<Int>()) } returns mockk<FluidData> {
+                every { getFluidType() } returns emptyFluid
+            }
         }
     }
 
@@ -479,6 +488,14 @@ class SafeLocationPropertyTest : FunSpec({
             checkAll(propTestConfig, arbValidY, Arb.int(-1000..1000), Arb.int(-1000..1000)) { y, x, z ->
                 val world = createMockWorld()
 
+                val waterFluid = mockk<org.bukkit.Fluid> {
+                    every { key } returns NamespacedKey.minecraft("water")
+                }
+
+                every { world.getFluidData(x, y, z) } returns mockk<FluidData> {
+                    every { getFluidType() } returns waterFluid
+                }
+
                 val groundBlock = createSafeGroundBlock()
                 // Water in feet position
                 val feetBlock = mockk<Block> {
@@ -519,6 +536,14 @@ class SafeLocationPropertyTest : FunSpec({
             checkAll(propTestConfig, arbValidY, Arb.int(-1000..1000), Arb.int(-1000..1000)) { y, x, z ->
                 val world = createMockWorld()
 
+                val waterFluid = mockk<org.bukkit.Fluid> {
+                    every { key } returns NamespacedKey.minecraft("water")
+                }
+
+                every { world.getFluidData(x, y, z) } returns mockk<FluidData> {
+                    every { getFluidType() } returns waterFluid
+                }
+
                 val groundBlock = createSafeGroundBlock()
                 // Water in feet position
                 val feetBlock = mockk<Block> {
@@ -558,6 +583,14 @@ class SafeLocationPropertyTest : FunSpec({
         test("water in head position follows allowWater setting") {
             checkAll(propTestConfig, Arb.boolean(), arbValidY, Arb.int(-1000..1000), Arb.int(-1000..1000)) { allowWater, y, x, z ->
                 val world = createMockWorld()
+
+                val waterFluid = mockk<org.bukkit.Fluid> {
+                    every { key } returns NamespacedKey.minecraft("water")
+                }
+
+                every { world.getFluidData(x, y + 1, z) } returns mockk<FluidData> {
+                    every { getFluidType() } returns waterFluid
+                }
 
                 val groundBlock = createSafeGroundBlock()
                 val feetBlock = createSafeBodyBlock()

@@ -2,6 +2,7 @@ package me.cyljacky02.loafylib.location
 
 import org.bukkit.Location
 import org.bukkit.Material
+import org.bukkit.NamespacedKey
 import org.bukkit.World
 import org.bukkit.entity.*
 import org.bukkit.util.BoundingBox
@@ -40,6 +41,10 @@ import java.util.concurrent.CompletableFuture
  * @see SafeLocationSearch for finding nearby safe locations
  */
 object SafeLocation {
+
+    private val EMPTY_FLUID_KEY = NamespacedKey.minecraft("empty")
+    private val WATER_FLUID_KEY = NamespacedKey.minecraft("water")
+    private val FLOWING_WATER_FLUID_KEY = NamespacedKey.minecraft("flowing_water")
 
     /** Player bounding box width (Minecraft standard) */
     const val PLAYER_WIDTH: Double = 0.6
@@ -137,6 +142,25 @@ object SafeLocation {
         val feetBlock = world.getBlockAt(x, y, z)
         val headBlock = world.getBlockAt(x, y + 1, z)
 
+        val feetFluidType = world.getFluidData(x, y, z).fluidType
+        val headFluidType = world.getFluidData(x, y + 1, z).fluidType
+
+        val feetFluidKey = feetFluidType.key
+        val headFluidKey = headFluidType.key
+
+        if (options.allowWater) {
+            if (feetFluidKey != EMPTY_FLUID_KEY && feetFluidKey != WATER_FLUID_KEY && feetFluidKey != FLOWING_WATER_FLUID_KEY) {
+                return false
+            }
+            if (headFluidKey != EMPTY_FLUID_KEY && headFluidKey != WATER_FLUID_KEY && headFluidKey != FLOWING_WATER_FLUID_KEY) {
+                return false
+            }
+        } else {
+            if (feetFluidKey != EMPTY_FLUID_KEY || headFluidKey != EMPTY_FLUID_KEY) {
+                return false
+            }
+        }
+
         // Requirement 1.3: Ground must be solid (supports player weight)
         if (!groundBlock.isSolid) {
             return false
@@ -148,7 +172,7 @@ object SafeLocation {
         }
 
         // Requirements 1.5, 1.6, 1.8: Body space validation
-        if (!isBodySpaceSafe(feetBlock.type, headBlock.type, options)) {
+        if (!isBodySpaceSafe(feetBlock.type, headBlock.type)) {
             return false
         }
 
@@ -212,10 +236,9 @@ object SafeLocation {
      *
      * @param feetType Material at feet position
      * @param headType Material at head position
-     * @param options Safety options
      * @return true if body space is safe
      */
-    private fun isBodySpaceSafe(feetType: Material, headType: Material, options: SafetyOptions): Boolean {
+    private fun isBodySpaceSafe(feetType: Material, headType: Material): Boolean {
         // Check feet block for hazardous materials (lava, fire, soul fire)
         if (feetType in HAZARDOUS_BODY) {
             return false
@@ -236,8 +259,8 @@ object SafeLocation {
      * Uses Block.getCollisionShape() to check for collision with partial blocks
      * like fences, walls, and open trapdoors.
      *
-     * Optimization: Only checks the feet and head blocks since we already verified
-     * they are passable. This handles edge cases like standing next to a fence.
+     * Checks all blocks that the player bounding box might intersect, handling
+     * edge cases like standing next to a fence or partial blocks at boundaries.
      *
      * @param location The location to check
      * @param world The world

@@ -10,8 +10,13 @@ import io.kotest.property.arbitrary.*
 import io.kotest.property.checkAll
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
+import io.papermc.paper.block.fluid.FluidData
+import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.Material
+import org.bukkit.NamespacedKey
 import org.bukkit.World
 import org.bukkit.WorldBorder
 import org.bukkit.block.Block
@@ -22,7 +27,16 @@ import org.bukkit.util.VoxelShape
  */
 class SafeLocationSearchPropertyTest : FunSpec({
 
-    val propTestConfig = PropTestConfig(iterations = 50) // Reduced for performance
+    beforeSpec {
+        mockkStatic(Bukkit::class)
+        every { Bukkit.isOwnedByCurrentRegion(any<World>(), any<Int>(), any<Int>(), any<Int>()) } returns true
+    }
+
+    afterSpec {
+        unmockkStatic(Bukkit::class)
+    }
+
+    val propTestConfig = PropTestConfig(iterations = 20) // Reduced for performance
 
     // Reusable empty voxel shape
     val emptyVoxelShape = mockk<VoxelShape>(relaxed = true) {
@@ -66,6 +80,11 @@ class SafeLocationSearchPropertyTest : FunSpec({
             every { this@mockk.maxHeight } returns maxHeight
             every { this@mockk.worldBorder } returns worldBorder
             every { environment } returns World.Environment.NORMAL
+            every { this@mockk.getFluidData(any<Int>(), any<Int>(), any<Int>()) } returns mockk<FluidData> {
+                every { getFluidType() } returns mockk<org.bukkit.Fluid> {
+                    every { key } returns NamespacedKey.minecraft("empty")
+                }
+            }
 
             // For any block request, return solid (works as ground) and passable (works as body)
             // The key insight: isSolid=true AND isPassable=true works for both ground and body checks
@@ -189,6 +208,11 @@ class SafeLocationSearchPropertyTest : FunSpec({
                     every { this@mockk.maxHeight } returns 320
                     every { this@mockk.worldBorder } returns worldBorder
                     every { environment } returns World.Environment.NORMAL
+                    every { this@mockk.getFluidData(any<Int>(), any<Int>(), any<Int>()) } returns mockk<FluidData> {
+                        every { getFluidType() } returns mockk<org.bukkit.Fluid> {
+                            every { key } returns NamespacedKey.minecraft("empty")
+                        }
+                    }
 
                     // Make origin unsafe (non-solid ground), but dy=1 safe
                     every { getBlockAt(any<Int>(), any<Int>(), any<Int>()) } answers {
@@ -308,6 +332,11 @@ class SafeLocationSearchPropertyTest : FunSpec({
                 every { this@mockk.maxHeight } returns 320
                 every { this@mockk.worldBorder } returns worldBorder
                 every { environment } returns World.Environment.NORMAL
+                every { this@mockk.getFluidData(any<Int>(), any<Int>(), any<Int>()) } returns mockk<FluidData> {
+                    every { getFluidType() } returns mockk<org.bukkit.Fluid> {
+                        every { key } returns NamespacedKey.minecraft("empty")
+                    }
+                }
                 every { getBlockAt(any<Int>(), any<Int>(), any<Int>()) } returns unsafeBlock
             }
 

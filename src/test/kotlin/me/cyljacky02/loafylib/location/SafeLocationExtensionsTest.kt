@@ -3,8 +3,11 @@ package me.cyljacky02.loafylib.location
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.mockk.*
+import io.papermc.paper.block.fluid.FluidData
+import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.Material
+import org.bukkit.NamespacedKey
 import org.bukkit.World
 import org.bukkit.WorldBorder
 import org.bukkit.block.Block
@@ -19,6 +22,15 @@ import java.util.concurrent.CompletableFuture
  */
 class SafeLocationExtensionsTest : FunSpec({
 
+    beforeSpec {
+        mockkStatic(Bukkit::class)
+        every { Bukkit.isOwnedByCurrentRegion(any<World>(), any<Int>(), any<Int>(), any<Int>()) } returns true
+    }
+
+    afterSpec {
+        unmockkStatic(Bukkit::class)
+    }
+
     /**
      * Creates a mock world with standard bounds.
      */
@@ -31,6 +43,11 @@ class SafeLocationExtensionsTest : FunSpec({
             every { this@mockk.maxHeight } returns maxHeight
             every { this@mockk.worldBorder } returns worldBorder
             every { environment } returns World.Environment.NORMAL
+            every { this@mockk.getFluidData(any<Int>(), any<Int>(), any<Int>()) } returns mockk<FluidData> {
+                every { getFluidType() } returns mockk<org.bukkit.Fluid> {
+                    every { key } returns NamespacedKey.minecraft("empty")
+                }
+            }
         }
     }
 

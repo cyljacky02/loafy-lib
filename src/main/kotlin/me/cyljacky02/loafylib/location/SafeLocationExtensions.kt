@@ -15,7 +15,7 @@ import java.util.concurrent.CompletableFuture
  * ```kotlin
  * // Synchronous
  * if (location.isSafe()) { ... }
- * val safe = location.findSafeNearby(radius = 5)
+ * val safe = location.findSafeNearby(radiusXZ = 5)
  *
  * // Async (CompletableFuture)
  * location.isSafeAsync().thenAccept { isSafe -> ... }
