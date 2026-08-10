@@ -141,7 +141,12 @@ SERVER_PID=$!
 exec 3>"$CONSOLE"
 
 cleanup() {
-    exec 3>&- 2>/dev/null || true
+    # Braces, not a bare `exec ... 2>/dev/null`: an exec carrying only
+    # redirections applies them to the shell permanently, which would send the
+    # rest of this script's stderr — including every failure message — to
+    # /dev/null. The group scopes the redirect to this one command while still
+    # closing the descriptor in the current shell.
+    { exec 3>&-; } 2>/dev/null || true
     if kill -0 "$SERVER_PID" 2>/dev/null; then
         kill -9 "$SERVER_PID" 2>/dev/null || true
     fi
@@ -220,13 +225,19 @@ for pattern in "${FATAL_PATTERNS[@]}"; do
 done
 (( FOUND_FATAL == 0 )) || fail "classloading or library-loader errors during boot"
 
-grep -q "Enabling ${PLUGIN_NAME}" "$LOG_FILE" \
+# Plugin-lifecycle assertions run against the STARTUP portion of the log only.
+# Stopping the server disables every plugin, so "Disabling <plugin>" is normal
+# at shutdown and only means something if it appears before startup completed.
+STARTUP_LOG="$WORK_DIR/startup.log"
+sed -n '1,/Done (.*)! For help, type "help"/p' "$LOG_FILE" > "$STARTUP_LOG"
+
+grep -q "Enabling ${PLUGIN_NAME}" "$STARTUP_LOG" \
     || fail "${PLUGIN_NAME} was never enabled — check that the jar landed in plugins/"
 
-# Paper disables a plugin whose onEnable threw, so this catches a plugin that
-# logged "Enabling" and then failed.
-if grep -q "Disabling ${PLUGIN_NAME}" "$LOG_FILE"; then
-    grep -n -B 20 "Disabling ${PLUGIN_NAME}" "$LOG_FILE" | tail -n 40 >&2
+# Paper disables a plugin whose onEnable threw, so a disable *before* startup
+# finished catches a plugin that logged "Enabling" and then failed.
+if grep -q "Disabling ${PLUGIN_NAME}" "$STARTUP_LOG"; then
+    grep -n -B 20 "Disabling ${PLUGIN_NAME}" "$STARTUP_LOG" | tail -n 40 >&2
     fail "${PLUGIN_NAME} was disabled during startup"
 fi
 
