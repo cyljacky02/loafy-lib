@@ -37,7 +37,6 @@ jobs:
       released: ${{ steps.release.outputs.release_created }}
       tag: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
-      pr: ${{ steps.release.outputs.pr }}
 
     steps:
       - uses: googleapis/release-please-action@v4
@@ -71,29 +70,54 @@ jobs:
   validate-release-pr:
     name: Validate the release pull request
     needs: release-please
-    if: needs.release-please.outputs.pr != '' && needs.release-please.outputs.pr != 'null'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
+      pull-requests: read
       statuses: write
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+      # Discovered from the API rather than taken from release-please's `pr`
+      # output. That output is only set on runs where the pull request is
+      # actually created or updated, so an existing release pull request that
+      # this run did not change would never be validated and would sit blocked
+      # forever -- which is exactly what happened the first time.
+      - name: Find the open release pull request
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" --jq '[.[] | select(.head.ref | startswith("release-please--"))] | first')"
 
-      - name: Record the commit under test
-        id: head
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [[ -z "$pr" || "$pr" == "null" ]]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No open release pull request to validate."
+          else
+            number="$(jq -r .number <<<"$pr")"
+            sha="$(jq -r .head.sha <<<"$pr")"
+            {
+              echo "found=true"
+              echo "number=$number"
+              echo "sha=$sha"
+            } >> "$GITHUB_OUTPUT"
+            echo "Validating #$number at $sha"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.find.outputs.found == 'true'
+        with:
+          ref: ${{ steps.find.outputs.sha }}
 
       # Reported before the work starts so the pull request shows the check as
       # running, rather than looking unverified until the job happens to finish.
       - name: Mark the check as pending
+        if: steps.find.outputs.found == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/${{ steps.head.outputs.sha }}" \
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/${{ steps.find.outputs.sha }}" \
             -f state=pending \
             -f context='Build and verify' \
             -f description='Verifying the release commit' \
@@ -101,24 +125,29 @@ jobs:
 
       - name: Resolve Java toolchain
         id: jdk
+        if: steps.find.outputs.found == 'true'
         run: |
           echo "version=$(sed -n 's/^jdk[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' gradle/libs.versions.toml | head -n1)" >> "$GITHUB_OUTPUT"
 
       - name: Set up JDK ${{ steps.jdk.outputs.version }}
+        if: steps.find.outputs.found == 'true'
         uses: actions/setup-java@v4
         with:
           java-version: ${{ steps.jdk.outputs.version }}
           distribution: temurin
 
       - name: Set up Gradle
+        if: steps.find.outputs.found == 'true'
         uses: gradle/actions/setup-gradle@v4
         with:
           cache-read-only: true
 
       - name: Build and test
+        if: steps.find.outputs.found == 'true'
         run: ./gradlew build --console=plain
 
       - name: Cache Paper server jars
+        if: steps.find.outputs.found == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cache/paper
@@ -126,10 +155,11 @@ jobs:
           restore-keys: paper-
 
       - name: Boot smoke test
+        if: steps.find.outputs.found == 'true'
         run: .github/scripts/smoke-test.sh
 
       - name: Upload diagnostics on failure
-        if: failure()
+        if: failure() && steps.find.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: release-pr-diagnostics
@@ -141,7 +171,7 @@ jobs:
           retention-days: 7
 
       - name: Report the result
-        if: always()
+        if: always() && steps.find.outputs.found == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           OUTCOME: ${{ job.status }}
@@ -150,7 +180,7 @@ jobs:
             success) state=success; description="Build, tests and boot smoke test passed" ;;
             *)       state=failure; description="Verification failed - see the run for details" ;;
           esac
-          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/${{ steps.head.outputs.sha }}" \
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/${{ steps.find.outputs.sha }}" \
             -f state="$state" \
             -f context='Build and verify' \
             -f description="$description" \
