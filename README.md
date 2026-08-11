@@ -1397,17 +1397,19 @@ alone:
    `minecraft`, `platform-jump`, `platform-patch`, `validation-failed`, `build`.
 4. Optionally add a branch protection rule on `main` requiring the
    **Build and verify** check.
-5. **Add an `AUTOMATION_TOKEN` secret** — a fine-grained personal access token
-   scoped to this repository with **Contents: read and write**, **Pull requests:
-   read and write** and **Workflows: read and write**.
+5. **Optional: an `AUTOMATION_TOKEN` secret** — a fine-grained personal access
+   token with **Contents**, **Pull requests** and **Workflows** read/write.
 
-   Pull requests opened with the default `GITHUB_TOKEN` do not trigger workflow
-   runs, so the required **Build and verify** check never reports and branch
-   protection blocks them. A personal access token is a separate identity, so
-   its pull requests get CI normally. Both `release.yml` and
-   `minecraft-update.yml` fall back to `GITHUB_TOKEN` when the secret is absent
-   — automation still works, but each of their pull requests needs its workflow
-   run approved by hand before it can merge.
+   This is no longer required. Pull requests opened with the default
+   `GITHUB_TOKEN` never trigger workflow runs, so the required **Build and
+   verify** check would never report and branch protection would block them
+   forever. Rather than depend on a token, the release and Minecraft workflows
+   now run the verification themselves and write the result back as a commit
+   status under that exact name — a check that genuinely ran, reported without
+   a token.
+
+   A token is still useful if you would rather see a normal check run on the
+   pull request, and both workflows use it automatically when present:
 
    ```bash
    gh secret set AUTOMATION_TOKEN --repo cyljacky02/loafy-lib

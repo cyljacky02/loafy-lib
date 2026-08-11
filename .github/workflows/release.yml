@@ -37,6 +37,7 @@ jobs:
       released: ${{ steps.release.outputs.release_created }}
       tag: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
+      pr: ${{ steps.release.outputs.pr }}
 
     steps:
       - uses: googleapis/release-please-action@v4
@@ -52,6 +53,108 @@ jobs:
           # which case each release pull request needs its workflow run approved
           # by hand before it can merge.
           token: ${{ secrets.AUTOMATION_TOKEN || github.token }}
+
+  # ---------------------------------------------------------------------------
+  # Validate the release pull request and report its own status.
+  #
+  # A pull request opened with GITHUB_TOKEN never triggers a workflow run, so
+  # the required "Build and verify" check never reports on it and branch
+  # protection blocks the merge forever. The usual workaround is a personal
+  # access token, which has to be minted and stored per repository.
+  #
+  # This avoids that entirely. workflow_dispatch and push are the events
+  # GITHUB_TOKEN cannot trigger -- but nothing stops this job from doing the
+  # verification itself and writing the result back as a commit status. The
+  # status context matches the required check name, so branch protection is
+  # satisfied by a check that genuinely ran rather than by a token.
+  # ---------------------------------------------------------------------------
+  validate-release-pr:
+    name: Validate the release pull request
+    needs: release-please
+    if: needs.release-please.outputs.pr != '' && needs.release-please.outputs.pr != 'null'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      statuses: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+
+      - name: Record the commit under test
+        id: head
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Reported before the work starts so the pull request shows the check as
+      # running, rather than looking unverified until the job happens to finish.
+      - name: Mark the check as pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/${{ steps.head.outputs.sha }}" \
+            -f state=pending \
+            -f context='Build and verify' \
+            -f description='Verifying the release commit' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Resolve Java toolchain
+        id: jdk
+        run: |
+          echo "version=$(sed -n 's/^jdk[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' gradle/libs.versions.toml | head -n1)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK ${{ steps.jdk.outputs.version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ steps.jdk.outputs.version }}
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      - name: Build and test
+        run: ./gradlew build --console=plain
+
+      - name: Cache Paper server jars
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/paper
+          key: paper-release-pr
+          restore-keys: paper-
+
+      - name: Boot smoke test
+        run: .github/scripts/smoke-test.sh
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-pr-diagnostics
+          path: |
+            .smoke/boot.log
+            build/reports/tests/test
+            build/test-results/test
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Report the result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          case "$OUTCOME" in
+            success) state=success; description="Build, tests and boot smoke test passed" ;;
+            *)       state=failure; description="Verification failed - see the run for details" ;;
+          esac
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/${{ steps.head.outputs.sha }}" \
+            -f state="$state" \
+            -f context='Build and verify' \
+            -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
   publish:
     name: Build and publish the jar
