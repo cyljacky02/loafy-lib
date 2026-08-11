@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.3](https://github.com/cyljacky02/loafy-lib/compare/v1.2.2...v1.2.3) (2026-08-11)
+
+
+### Bug Fixes
+
+* **ci:** find the release pull request instead of trusting an output ([80da852](https://github.com/cyljacky02/loafy-lib/commit/80da8520f8092fa33f1342944b10d424af19f041))
+* **ci:** stop the smoke test hiding its own failure messages ([0e4c88e](https://github.com/cyljacky02/loafy-lib/commit/0e4c88e91f8999fc65d021c1bc3cf3f12900a90b))
+
 ## [1.2.2](https://github.com/cyljacky02/loafy-lib/compare/v1.2.1...v1.2.2) (2026-08-10)
 
 
