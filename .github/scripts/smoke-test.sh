@@ -229,7 +229,9 @@ if (( STARTED == 1 )); then
     done
 fi
 
-exec 3>&- 2>/dev/null || true
+# Braces again: a bare `exec ... 2>/dev/null` would redirect this shell's
+# stderr permanently, silencing every failure message below.
+{ exec 3>&-; } 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true
 trap - EXIT
 rm -f "$CONSOLE"
