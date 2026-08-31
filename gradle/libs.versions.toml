@@ -20,7 +20,7 @@
 # build.gradle.kts parses both to derive the Minecraft version (for run-paper
 # and the smoke test) and the paper-plugin.yml api-version. Do not hand-edit
 # without running `./gradlew build && .github/scripts/smoke-test.sh`.
-paper-api = "26.2.build.111-stable"
+paper-api = "26.2.build.121-stable"
 
 # Java toolchain. Dictated by paper-api: the artifact's Gradle module metadata
 # declares `org.gradle.jvm.version`, and resolution fails outright if the
