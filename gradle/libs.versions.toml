@@ -39,7 +39,7 @@ kotlinx-serialization = "1.10.0"
 
 # --- Runtime libraries (fetched by Paper's library loader) -------------------
 hikaricp = "7.0.2"
-mariadb = "3.5.7"
+mariadb = "3.5.11"
 sqlite = "3.47.2.0"
 configurate = "4.2.0"
 reactor = "3.8.1"
